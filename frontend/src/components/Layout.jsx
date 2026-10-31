@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   Activity, Banknote, BarChart3, Bell, Building2, CalendarDays, ChevronsUpDown, Clock, FileText, FolderKanban, Gift, Home, IdCard, KeyRound, LogOut, Menu, MessageSquare, Moon, Plug,
@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { applyTheme, useAuth } from '../contexts/AuthContext'
 import { useLive } from '../contexts/LiveContext'
-import { Avatar, ErrorBoundary } from './ui'
+import { Avatar, ErrorBoundary, PageLoader } from './ui'
 import { useInterval } from './hooks'
 import { clock, fmtTime, ROLE_LABEL, roleShort } from '../utils/format'
 import api, { API_URL, company, session } from '../services/api'
@@ -257,7 +257,7 @@ export default function Layout() {
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-panel sm:rounded-2xl">
           <TopBar openMenu={() => setMenu(true)} />
           <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pt-2 sm:px-6">
-            <div className="mx-auto max-w-[1240px] animate-fade-up"><ErrorBoundary key={pathname}><Outlet /></ErrorBoundary></div>
+            <div className="mx-auto max-w-[1240px] animate-fade-up"><ErrorBoundary key={pathname}><Suspense fallback={<PageLoader />}><Outlet /></Suspense></ErrorBoundary></div>
           </main>
         </div>
       </div>

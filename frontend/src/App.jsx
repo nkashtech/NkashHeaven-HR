@@ -1,46 +1,70 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import { LiveProvider } from './contexts/LiveContext'
 import { company } from './services/api'
-import Companies from './pages/system/Companies'
-import HrRoles from './pages/hr/Roles'
-import MyCard from './pages/cards/MyCard'
-import Kiosk from './pages/cards/Kiosk'
-import PublicCard from './pages/cards/PublicCard'
 import Layout from './components/Layout'
 import { PageLoader } from './components/ui'
 import Login from './pages/auth/Login'
 import { ForgotPassword, ResetPassword } from './pages/auth/PasswordReset'
-import ForcePassword from './pages/auth/ForcePassword'
-import EnrollTwoFactor from './pages/auth/EnrollTwoFactor'
-import SetupWizard from './pages/auth/SetupWizard'
-import Home from './pages/dashboards/Home'
-import Attendance from './pages/Attendance'
-import Timesheets from './pages/Timesheets'
-import Leave from './pages/Leave'
-import Calendar from './pages/Calendar'
-import Chat from './pages/Chat'
-import People from './pages/People'
-import Profile from './pages/Profile'
-import Settings from './pages/Settings'
-import Notifications from './pages/Notifications'
-import TeamApprovals from './pages/team/TeamApprovals'
-import Reports from './pages/team/Reports'
-import Employees from './pages/hr/Employees'
-import ChangeRequests from './pages/hr/ChangeRequests'
-import Policies from './pages/hr/Policies'
-import Audit from './pages/hr/Audit'
-import Health from './pages/system/Health'
-import Integrations from './pages/system/Integrations'
-import SystemSettings from './pages/system/SystemSettings'
-import Projects from './pages/projects/Projects'
-import { ProjectDetail, ProjectTasks } from './pages/projects/ProjectDetail'
-import { AllTasks, ProjectConfiguration, ProjectDashboard, ProjectReporting, RiskRegisterPage } from './pages/projects/ProjectViews'
-import PersonProfile from './pages/PersonProfile'
-import Contracts from './pages/hr/Contracts'
-import Payroll, { MyPayslips } from './pages/hr/Payroll'
-import Appraisals from './pages/Appraisals'
+
+// Each page is its own download, so signing in doesn't fetch the whole app.
+const loaders = []
+function page(load, name = 'default') {
+  const fetchIt = () => load().then((m) => {
+    sessionStorage.removeItem('chunkRetry')
+    return { default: m[name] }
+  }).catch((err) => {
+    // After a deploy the old file names are gone: reload once to pick up the new ones.
+    if (sessionStorage.getItem('chunkRetry')) throw err
+    sessionStorage.setItem('chunkRetry', '1')
+    window.location.reload()
+    return new Promise(() => {})
+  })
+  loaders.push(load)
+  return lazy(fetchIt)
+}
+
+const Companies = page(() => import('./pages/system/Companies'))
+const HrRoles = page(() => import('./pages/hr/Roles'))
+const MyCard = page(() => import('./pages/cards/MyCard'))
+const Kiosk = page(() => import('./pages/cards/Kiosk'))
+const PublicCard = page(() => import('./pages/cards/PublicCard'))
+const ForcePassword = page(() => import('./pages/auth/ForcePassword'))
+const EnrollTwoFactor = page(() => import('./pages/auth/EnrollTwoFactor'))
+const SetupWizard = page(() => import('./pages/auth/SetupWizard'))
+const Home = page(() => import('./pages/dashboards/Home'))
+const Attendance = page(() => import('./pages/Attendance'))
+const Timesheets = page(() => import('./pages/Timesheets'))
+const Leave = page(() => import('./pages/Leave'))
+const Calendar = page(() => import('./pages/Calendar'))
+const Chat = page(() => import('./pages/Chat'))
+const People = page(() => import('./pages/People'))
+const Profile = page(() => import('./pages/Profile'))
+const Settings = page(() => import('./pages/Settings'))
+const Notifications = page(() => import('./pages/Notifications'))
+const TeamApprovals = page(() => import('./pages/team/TeamApprovals'))
+const Reports = page(() => import('./pages/team/Reports'))
+const Employees = page(() => import('./pages/hr/Employees'))
+const ChangeRequests = page(() => import('./pages/hr/ChangeRequests'))
+const Policies = page(() => import('./pages/hr/Policies'))
+const Audit = page(() => import('./pages/hr/Audit'))
+const Health = page(() => import('./pages/system/Health'))
+const Integrations = page(() => import('./pages/system/Integrations'))
+const SystemSettings = page(() => import('./pages/system/SystemSettings'))
+const Projects = page(() => import('./pages/projects/Projects'))
+const ProjectDetail = page(() => import('./pages/projects/ProjectDetail'), 'ProjectDetail')
+const ProjectTasks = page(() => import('./pages/projects/ProjectDetail'), 'ProjectTasks')
+const AllTasks = page(() => import('./pages/projects/ProjectViews'), 'AllTasks')
+const ProjectConfiguration = page(() => import('./pages/projects/ProjectViews'), 'ProjectConfiguration')
+const ProjectDashboard = page(() => import('./pages/projects/ProjectViews'), 'ProjectDashboard')
+const ProjectReporting = page(() => import('./pages/projects/ProjectViews'), 'ProjectReporting')
+const RiskRegisterPage = page(() => import('./pages/projects/ProjectViews'), 'RiskRegisterPage')
+const PersonProfile = page(() => import('./pages/PersonProfile'))
+const Contracts = page(() => import('./pages/hr/Contracts'))
+const Payroll = page(() => import('./pages/hr/Payroll'))
+const MyPayslips = page(() => import('./pages/hr/Payroll'), 'MyPayslips')
+const Appraisals = page(() => import('./pages/Appraisals'))
 
 function Guard({ allow, children }) {
   return allow ? children : <Navigate to="/" replace />
@@ -123,15 +147,23 @@ function CompanyRoute() {
 
 export default function App() {
   const { user, loading } = useAuth()
+  // Once signed in, the other pages download quietly so moving between them is instant.
+  useEffect(() => {
+    if (!user) return undefined
+    const id = setTimeout(() => loaders.forEach((l) => l().catch(() => {})), 1500)
+    return () => clearTimeout(id)
+  }, [user])
   if (loading) return <PageLoader />
   return (
-    <Routes>
-      <Route path="/card/:token" element={<PublicCard />} />
-      <Route path="/c/:slug/*" element={<CompanyRoute />} />
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
-      <Route path="/forgot-password" element={<ForgotPassword />} />
-      <Route path="/reset-password" element={<ResetPassword />} />
-      <Route path="*" element={user ? <Private /> : <Navigate to={company.slug ? `/c/${company.slug}/login` : '/login'} replace />} />
-    </Routes>
+    <Suspense fallback={<PageLoader />}>
+      <Routes>
+        <Route path="/card/:token" element={<PublicCard />} />
+        <Route path="/c/:slug/*" element={<CompanyRoute />} />
+        <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="*" element={user ? <Private /> : <Navigate to={company.slug ? `/c/${company.slug}/login` : '/login'} replace />} />
+      </Routes>
+    </Suspense>
   )
 }

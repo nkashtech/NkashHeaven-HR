@@ -7,6 +7,9 @@ export const SOCKET_URL = API_URL.startsWith('http') ? new URL(API_URL).origin :
 
 const api = axios.create({ baseURL: API_URL, timeout: 30000 })
 
+// The last answer for each GET, so a page seen before opens at once. Belongs to the signed-in person.
+export const recent = new Map()
+
 // "Keep me signed in" stores the session in localStorage, otherwise sessionStorage.
 export const session = {
   get token() {
@@ -17,6 +20,7 @@ export const session = {
     ;(remember ? localStorage : sessionStorage).setItem('token', token)
   },
   clear() {
+    recent.clear()
     localStorage.removeItem('token')
     sessionStorage.removeItem('token')
   },

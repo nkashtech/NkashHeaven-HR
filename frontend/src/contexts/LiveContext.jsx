@@ -46,7 +46,8 @@ export function LiveProvider({ children }) {
   }, [refreshAttendance, refreshCounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const socket = io(SOCKET_URL, { auth: { token: session.token }, transports: ['websocket', 'polling'] })
+    // A host without live connections, like Vercel, gets a few tries rather than retrying forever.
+    const socket = io(SOCKET_URL, { auth: { token: session.token }, transports: ['websocket', 'polling'], reconnectionAttempts: 5 })
     socketRef.current = socket
     const fan = (event) => (payload) => (listeners.current.get(event) || []).forEach((fn) => fn(payload))
     ;['chat:message', 'chat:updated', 'chat:typing', 'presence', 'calendar:synced', 'connect'].forEach((e) => socket.on(e, fan(e)))

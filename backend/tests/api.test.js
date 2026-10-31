@@ -10,6 +10,7 @@ const { clearSettingsCache } = require('../lib/settings');
 const { setFallbackCompany, runAs, asPlatform } = require('../lib/tenant');
 const { STARTER_ROLES, SCOPE_TO_LEVEL } = require('../lib/permissions');
 const { setupCompany } = require('../lib/company-setup');
+const { Prisma } = require('@prisma/client');
 const { today, addDays, mondayOf, toDbDate, zonedToUtc, fromDbDate, weekdayKey } = require('../lib/time');
 
 const PASSWORD = 'Test@Password2026!';
@@ -1650,5 +1651,81 @@ describe('test case fixes', () => {
     expect(res.status).toBe(201);
     const lead = (await prisma.appraisal.findUnique({ where: { id: res.body.id } })).managerId;
     expect(await prisma.notification.count({ where: { userId: lead, type: 'appraisal.requested' } })).toBeGreaterThan(0);
+  });
+});
+
+describe('company invites and deletion', () => {
+  const create = async (name) => {
+    const res = await as('super').post('/system/companies', { name, adminName: 'First Admin', adminEmail: 'first@test.co' });
+    expect(res.status).toBe(201);
+    return res.body.company;
+  };
+
+  it('sends the welcome email during the request where no background job runs', async () => {
+    process.env.RUN_JOBS = 'false';
+    try {
+      const res = await as('super').post('/system/companies', { name: 'Instant Co', adminName: 'A', adminEmail: 'instant@test.co' });
+      expect(res.body.inviteSent).toBe(true);
+      const job = await asPlatform(async () => await prisma.emailJob.findFirst({ where: { companyId: res.body.company.id, kind: 'welcome' } }));
+      expect(job.status).toBe('SENT');
+    } finally {
+      process.env.RUN_JOBS = 'true';
+    }
+  });
+
+  it('resends the admin a new temporary password until they activate', async () => {
+    const company = await create('Resend Co');
+    const jobs = () => asPlatform(async () => await prisma.emailJob.count({ where: { companyId: company.id, kind: 'welcome' } }));
+    expect((await as('hr').post(`/system/companies/${company.id}/resend-invite`)).status).toBe(403);
+    const before = await jobs();
+    const res = await as('super').post(`/system/companies/${company.id}/resend-invite`);
+    expect(res.status).toBe(200);
+    expect(await jobs()).toBe(before + 1);
+    await asPlatform(async () => { await prisma.user.updateMany({ where: { companyId: company.id }, data: { inviteStatus: 'ACTIVATED' } }); });
+    expect((await as('super').post(`/system/companies/${company.id}/resend-invite`)).status).toBe(409);
+  });
+
+  it('only the Super Admin can delete a company, and never the platform', async () => {
+    const company = await create('Guarded Co');
+    expect((await as('hr').delete(`/system/companies/${company.id}`)).status).toBe(403);
+    const platform = await asPlatform(async () => await prisma.company.findFirst({ where: { isPlatform: true } }));
+    expect((await as('super').delete(`/system/companies/${platform.id}`)).status).toBe(404);
+    expect((await as('super').delete('/system/companies/99999999')).status).toBe(404);
+  });
+
+  it('removes everything a company owns and nothing from anyone else', async () => {
+    const company = await create('Doomed Co');
+    const keep = await create('Kept Co');
+    const fill = (id) => runAs(id, async () => {
+      const user = await prisma.user.findFirst({});
+      const project = await prisma.project.create({ data: { name: 'P' } });
+      const task = await prisma.task.create({ data: { name: 'T', projectId: project.id } });
+      await prisma.taskAssignee.create({ data: { taskId: task.id, userId: user.id } });
+      await prisma.projectFavorite.create({ data: { projectId: project.id, userId: user.id } });
+      await prisma.follower.create({ data: { entity: 'task', entityId: task.id, userId: user.id } });
+      await prisma.user.update({ where: { id: user.id }, data: { managerId: user.id } });
+      return { user, task };
+    });
+    const doomed = await fill(company.id);
+    const kept = await fill(keep.id);
+
+    expect((await as('super').delete(`/system/companies/${company.id}`)).status).toBe(200);
+
+    const tables = Prisma.dmmf.datamodel.models.filter((m) => m.fields.some((f) => f.name === 'companyId')).map((m) => m.name);
+    for (const table of tables) {
+      const [{ n }] = await prisma.$queryRawUnsafe(`SELECT COUNT(*) AS n FROM \`${table}\` WHERE companyId = ?`, company.id);
+      expect([table, Number(n)]).toEqual([table, 0]);
+    }
+    const [a, b] = await asPlatform(() => Promise.all([prisma.taskAssignee.count({ where: { taskId: doomed.task.id } }), prisma.follower.count({ where: { userId: doomed.user.id } })]));
+    expect([a, b]).toEqual([0, 0]);
+    await asPlatform(async () => {
+      expect(await prisma.company.findUnique({ where: { id: company.id } })).toBeNull();
+      expect(await prisma.company.findUnique({ where: { id: keep.id } })).not.toBeNull();
+      expect(await prisma.taskAssignee.count({ where: { taskId: kept.task.id } })).toBe(1);
+      expect(await prisma.user.count({ where: { companyId: keep.id } })).toBe(1);
+    });
+    // Foreign key checks must be back on for whichever request uses the connection next.
+    const rows = await Promise.all([1, 2, 3, 4].map(() => prisma.$queryRawUnsafe('SELECT @@FOREIGN_KEY_CHECKS AS fk')));
+    rows.forEach(([{ fk }]) => expect(Number(fk)).toBe(1));
   });
 });

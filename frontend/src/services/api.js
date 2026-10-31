@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { startBusy, stopBusy } from './busy'
 
 // VITE_API_URL points at the API when it's hosted apart from this app. Left empty, it's the same site.
 export const API_URL = import.meta.env.VITE_API_URL || '/api'
@@ -24,6 +25,7 @@ export const session = {
 api.interceptors.request.use((config) => {
   const token = session.token
   if (token) config.headers.Authorization = `Bearer ${token}`
+  config.busyButton = startBusy()
   return config
 })
 
@@ -37,8 +39,12 @@ export const loginPath = () => (company.slug ? `/c/${company.slug}/login` : '/lo
 const isPublic = (path) => ['/login', '/forgot-password', '/reset-password'].some((p) => path.endsWith(p)) || path.startsWith('/card/')
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    stopBusy(response.config.busyButton)
+    return response
+  },
   (error) => {
+    stopBusy(error.config?.busyButton)
     const status = error.response?.status
     if (status === 401 && session.token && !isPublic(window.location.pathname)) {
       session.clear()

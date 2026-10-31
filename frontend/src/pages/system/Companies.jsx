@@ -26,8 +26,9 @@ function NewCompany({ onClose, onSaved }) {
       const body = new FormData()
       Object.entries(form).forEach(([k, v]) => body.append(k, v))
       if (logo) body.append('file', logo)
-      await api.post('/system/companies', body)
-      toast.success('Company created and its admin invited')
+      const { data: r } = await api.post('/system/companies', body)
+      if (r.inviteSent) toast.success('Company created and its admin invited')
+      else toast.error('Company created, but the welcome email failed. Open the company to resend it.')
       onSaved()
     } catch (err) { fail(err) }
   }
@@ -54,6 +55,7 @@ function Detail({ company, onClose, onSaved }) {
   const [form, setForm] = useState({ name: company.name, slug: company.slug, seats: company.seats, flags: { chat: true, calendar: true, celebrations: true, ...company.flags } })
   const { data } = useFetch(`/system/companies/${company.id}/users`)
   const [viewAs, setViewAs] = useState({ userId: '', reason: '' })
+  const [deleting, setDeleting] = useState(false)
   const save = async (patch) => {
     try {
       await api.patch(`/system/companies/${company.id}`, patch)
@@ -67,6 +69,34 @@ function Detail({ company, onClose, onSaved }) {
       session.save(r.token, false)
       window.location.href = '/'
     } catch (err) { fail(err) }
+  }
+  const resend = async () => {
+    try {
+      const { data: r } = await api.post(`/system/companies/${company.id}/resend-invite`)
+      if (r.inviteSent) toast.success(`Welcome email sent to ${company.admin.email}`)
+      else toast.error('The welcome email could not be sent')
+    } catch (err) { fail(err) }
+  }
+  const remove = async () => {
+    try {
+      await api.delete(`/system/companies/${company.id}`)
+      toast.success(`${company.name} deleted`)
+      onSaved()
+    } catch (err) { fail(err) }
+  }
+  if (deleting) {
+    return (
+      <Modal title="Delete company" onClose={() => setDeleting(false)}>
+        <div className="space-y-3">
+          <p>Are you sure you want to delete <span className="font-semibold">{company.name}</span>?</p>
+          <p className="text-ink-soft">This permanently removes its {company.people === 1 ? '1 person' : `${company.people} people`} and all their attendance, leave, payroll, chat and files. This can't be undone.</p>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-outline" onClick={() => setDeleting(false)}>Cancel</button>
+            <button className="btn-danger" onClick={remove}>Yes, delete company</button>
+          </div>
+        </div>
+      </Modal>
+    )
   }
   return (
     <Modal title={company.name} wide onClose={onClose}>
@@ -84,6 +114,8 @@ function Detail({ company, onClose, onSaved }) {
         <div className="flex flex-wrap gap-2">
           <button className="btn-primary" onClick={() => save(form)}>Save</button>
           {company.active ? <button className="btn-danger" onClick={() => save({ active: false })}>Suspend company</button> : <button className="btn-outline" onClick={() => save({ active: true })}>Reactivate</button>}
+          {company.admin && company.admin.inviteStatus !== 'ACTIVATED' && <button className="btn-outline" onClick={resend}>Resend admin welcome email</button>}
+          <button className="btn-danger" onClick={() => setDeleting(true)}>Delete company</button>
         </div>
         <form onSubmit={start} className="border-t border-line pt-3">
           <div className="eyebrow mb-1">View as a user (read-only, 30 minutes, they are told)</div>

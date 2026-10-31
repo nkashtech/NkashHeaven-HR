@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { S3Client, PutObjectCommand, GetObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 const prisma = require('./prisma');
 const { asPlatform } = require('./tenant');
 
@@ -50,6 +50,11 @@ async function readFile(file) {
   }
 }
 
+async function removeFile(file) {
+  await fs.promises.rm(path.join(ROOT, path.basename(file.storageKey)), { force: true });
+  if (bucket()) await s3().send(new DeleteObjectCommand({ Bucket: bucket(), Key: cloudKey(file.storageKey) }));
+}
+
 async function storageBytes() {
   return asPlatform(async () => {
     const { _sum } = await prisma.fileObject.aggregate({ _sum: { size: true } });
@@ -57,4 +62,4 @@ async function storageBytes() {
   });
 }
 
-module.exports = { saveFile, readFile, storageBytes, isCloud: () => Boolean(bucket()) };
+module.exports = { saveFile, readFile, removeFile, storageBytes, isCloud: () => Boolean(bucket()) };

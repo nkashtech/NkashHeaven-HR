@@ -5,12 +5,12 @@ const { authenticate, requireRole } = require('../middleware/auth');
 const { HttpError, h, required, intParam } = require('../middleware/validation');
 const { getSettings, updateSettings, clearSettingsCache } = require('../../lib/settings');
 const { asPlatform, runAs } = require('../../lib/tenant');
-const { setupCompany, slugify } = require('../../lib/company-setup');
+const { setupCompany, deleteCompany, slugify } = require('../../lib/company-setup');
 const { SCOPE_TO_LEVEL } = require('../../lib/permissions');
 const { audit, securityEvent } = require('../../lib/audit');
 const { listIntegrations, saveConfig, isConfigured, PROVIDERS } = require('../../lib/integrations');
 const { connectionCount, isRealtimeUp } = require('../../lib/realtime');
-const { saveFile, storageBytes, isCloud } = require('../../lib/storage');
+const { saveFile, removeFile, storageBytes, isCloud } = require('../../lib/storage');
 const { runBackup } = require('../../lib/backup');
 const { notify } = require('../../lib/notify');
 const { decrypt } = require('../../lib/crypto');
@@ -195,7 +195,7 @@ router.post('/companies', superOnly, takeLogo, h(async (req, res) => {
   const timezone = req.body.timezone || 'Africa/Johannesburg';
   const company = await prisma.company.create({ data: { name: req.body.name.trim(), slug, timezone, seats: Number(req.body.seats) || 100 } });
   await setupCompany(company.id, timezone);
-  await runAs(company.id, async () => {
+  const inviteSent = await runAs(company.id, async () => {
     const role = await prisma.accessRole.findFirst({ where: { isSystem: true } });
     const today = new Date().toISOString().slice(0, 10);
     const user = await prisma.user.create({
@@ -209,10 +209,10 @@ router.post('/companies', superOnly, takeLogo, h(async (req, res) => {
     // Before the invite, so the admin's very first email already carries the logo.
     if (req.file) await saveLogo(req.file, user.id);
     const { sendInvite } = require('./employees');
-    await sendInvite(user, 'Your administrator');
+    return sendInvite(user, 'Your administrator');
   });
   await audit(req, { entity: 'Company', entityId: company.id, action: 'company.created', after: { name: company.name, slug } });
-  res.status(201).json({ company: await companyView(await prisma.company.findUnique({ where: { id: company.id } })) });
+  res.status(201).json({ company: await companyView(await prisma.company.findUnique({ where: { id: company.id } })), inviteSent });
 }));
 
 router.patch('/companies/:id', superOnly, h(async (req, res) => {
@@ -232,6 +232,33 @@ router.patch('/companies/:id', superOnly, h(async (req, res) => {
   clearSettingsCache();
   await audit(req, { entity: 'Company', entityId: id, action: 'company.updated', before: { active: before.active, seats: before.seats }, after: { active: company.active, seats: company.seats } });
   res.json({ company: await companyView(company) });
+}));
+
+// A fresh temporary password for an admin who hasn't signed in yet. It replaces the one in any earlier email.
+router.post('/companies/:id/resend-invite', superOnly, h(async (req, res) => {
+  const id = intParam(req.params.id);
+  const company = await prisma.company.findUnique({ where: { id } });
+  if (!company || company.isPlatform) throw new HttpError(404, 'Company not found');
+  const admin = await prisma.user.findFirst({ where: { companyId: id, role: 'ADMIN', active: true }, orderBy: { id: 'asc' } });
+  if (!admin) throw new HttpError(404, 'This company has no admin');
+  if (admin.inviteStatus === 'ACTIVATED') throw new HttpError(409, 'This admin has already activated their account');
+  const { sendInvite } = require('./employees');
+  const inviteSent = await runAs(id, () => sendInvite(admin, 'Your administrator'));
+  await audit(req, { entity: 'Company', entityId: id, action: 'company.invite_resent' });
+  res.json({ inviteSent });
+}));
+
+// Permanent: the company, its people and everything they hold.
+router.delete('/companies/:id', superOnly, h(async (req, res) => {
+  const id = intParam(req.params.id);
+  const company = await prisma.company.findUnique({ where: { id } });
+  if (!company || company.isPlatform) throw new HttpError(404, 'Company not found');
+  const files = await deleteCompany(id);
+  clearSettingsCache();
+  // The data is already gone, so a file that won't delete mustn't report the whole thing as failed.
+  await Promise.all(files.map((f) => removeFile(f).catch((err) => console.error(err))));
+  await audit(req, { entity: 'Company', entityId: id, action: 'company.deleted', before: { name: company.name, slug: company.slug } });
+  res.json({ ok: true });
 }));
 
 router.post('/companies/:id/logo', superOnly, takeLogo, h(async (req, res) => {

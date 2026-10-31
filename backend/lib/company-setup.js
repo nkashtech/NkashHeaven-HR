@@ -1,3 +1,4 @@
+const { Prisma } = require('@prisma/client');
 const prisma = require('./prisma');
 const { runAs } = require('./tenant');
 const { STARTER_ROLES } = require('./permissions');
@@ -34,4 +35,27 @@ async function setupCompany(companyId, timezone) {
   });
 }
 
-module.exports = { setupCompany, slugify };
+// Every table a company owns rows in. These have foreign keys between them, some circular, so the checks are off while the rows go.
+const COMPANY_TABLES = Prisma.dmmf.datamodel.models.filter((m) => m.fields.some((f) => f.name === 'companyId')).map((m) => m.name);
+
+// All or nothing. Returns the company's stored files, which the caller removes once this has gone through.
+async function deleteCompany(id) {
+  const files = await prisma.fileObject.findMany({ where: { companyId: id }, select: { storageKey: true } });
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 0');
+    try {
+      // These tables have no companyId of their own.
+      await tx.$executeRaw`DELETE f FROM ProjectFavorite f JOIN Project p ON p.id = f.projectId WHERE p.companyId = ${id}`;
+      await tx.$executeRaw`DELETE a FROM TaskAssignee a JOIN Task t ON t.id = a.taskId WHERE t.companyId = ${id}`;
+      await tx.$executeRaw`DELETE l FROM PayslipLine l JOIN Payslip p ON p.id = l.payslipId WHERE p.companyId = ${id}`;
+      await tx.$executeRaw`DELETE f FROM Follower f JOIN User u ON u.id = f.userId WHERE u.companyId = ${id}`;
+      for (const table of COMPANY_TABLES) await tx.$executeRawUnsafe(`DELETE FROM \`${table}\` WHERE companyId = ?`, id);
+      await tx.$executeRaw`DELETE FROM Company WHERE id = ${id}`;
+    } finally {
+      await tx.$executeRawUnsafe('SET FOREIGN_KEY_CHECKS = 1');
+    }
+  }, { timeout: 60000 });
+  return files;
+}
+
+module.exports = { setupCompany, deleteCompany, slugify };

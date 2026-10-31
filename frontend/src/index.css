@@ -42,6 +42,15 @@ body { background: rgb(var(--shell)); color: rgb(var(--ink)); font-family: Inter
 /* Grid and flex children may shrink below their content, so wide tables scroll inside their card instead of pushing the page sideways. */
 .grid > * { min-width: 0; }
 
+/* Set by services/busy.js while a button's API call is running. The label stays in place so the button keeps its size. */
+button[data-busy] { position: relative; color: transparent !important; pointer-events: none; }
+button[data-busy] > * { visibility: hidden; }
+button[data-busy]::after {
+  content: ''; position: absolute; top: 50%; left: 50%; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border: 2px solid var(--busy-color, currentColor); border-right-color: transparent; border-radius: 50%; animation: busy-spin .7s linear infinite;
+}
+@keyframes busy-spin { to { transform: rotate(360deg); } }
+
 @media print {
   .no-print { display: none !important; }
   body, main, #root { background: #fff !important; height: auto !important; overflow: visible !important; }

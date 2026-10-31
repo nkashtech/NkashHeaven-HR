@@ -109,7 +109,10 @@ async function payslipHtml({ name, period }) {
 
 // The whole body is encrypted: a welcome email carries a temporary password.
 async function queueEmail({ to, name, subject, html, kind, userId }) {
-  return prisma.emailJob.create({ data: { toEmail: to, toName: name, subject, htmlEnc: encrypt(html), kind, userId } });
+  const job = await prisma.emailJob.create({ data: { toEmail: to, toName: name, subject, htmlEnc: encrypt(html), kind, userId } });
+  // Serverless hosts run no background job, so the mail has to leave before the request ends.
+  if (process.env.RUN_JOBS === 'false') job.sent = await deliver(job);
+  return job;
 }
 
 // Test machines hold demo people, some with real-looking addresses, so only listed addresses get real mail there.
@@ -143,30 +146,35 @@ async function sendViaBrevo(job, html) {
   return (await res.json()).messageId || null;
 }
 
+async function deliver(job) {
+  try {
+    const providerId = await sendViaBrevo(job, decrypt(job.htmlEnc));
+    await prisma.emailJob.update({ where: { id: job.id }, data: { status: 'SENT', sentAt: new Date(), providerId, attempts: job.attempts + 1, lastError: null } });
+    return true;
+  } catch (err) {
+    const attempts = job.attempts + 1;
+    const failed = attempts >= MAX_ATTEMPTS;
+    await prisma.emailJob.update({
+      where: { id: job.id },
+      data: {
+        attempts, lastError: err.message.slice(0, 500), status: failed ? 'FAILED' : 'PENDING',
+        nextAttempt: new Date(Date.now() + 30000 * 2 ** attempts),
+      },
+    });
+    if (failed && job.kind === 'welcome' && job.userId) {
+      await prisma.user.update({ where: { id: job.userId }, data: { inviteStatus: 'BOUNCED' } });
+    }
+    return false;
+  }
+}
+
 async function processEmailQueue(limit = 25) {
   const jobs = await prisma.emailJob.findMany({
     where: { status: 'PENDING', nextAttempt: { lte: new Date() } }, orderBy: { id: 'asc' }, take: limit,
   });
   let sent = 0;
   for (const job of jobs) {
-    try {
-      const providerId = await sendViaBrevo(job, decrypt(job.htmlEnc));
-      await prisma.emailJob.update({ where: { id: job.id }, data: { status: 'SENT', sentAt: new Date(), providerId, attempts: job.attempts + 1, lastError: null } });
-      sent += 1;
-    } catch (err) {
-      const attempts = job.attempts + 1;
-      const failed = attempts >= MAX_ATTEMPTS;
-      await prisma.emailJob.update({
-        where: { id: job.id },
-        data: {
-          attempts, lastError: err.message.slice(0, 500), status: failed ? 'FAILED' : 'PENDING',
-          nextAttempt: new Date(Date.now() + 30000 * 2 ** attempts),
-        },
-      });
-      if (failed && job.kind === 'welcome' && job.userId) {
-        await prisma.user.update({ where: { id: job.userId }, data: { inviteStatus: 'BOUNCED' } });
-      }
-    }
+    if (await deliver(job)) sent += 1;
   }
   return { processed: jobs.length, sent };
 }

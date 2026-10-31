@@ -50,7 +50,7 @@ async function sendInvite(user, actorName) {
   const { timezone } = await getSettings();
   const template = await getTemplate('welcome');
   const token = jwt.sign({ userId: user.id, purpose: 'invite' }, process.env.JWT_SECRET, { expiresIn: `${TEMP_HOURS}h` });
-  await queueEmail({
+  const job = await queueEmail({
     to: user.email, name: user.name, subject: fill(template.subject, { companyName: (await brand()).companyName }), kind: 'welcome', userId: user.id,
     html: await welcomeHtml({
       signInUrl: companyUrl(await brand(), `/login?invite=${token}`), design: template.design, name: user.name, email: user.email, tempPassword: password, intro: template.body, hrName: actorName,
@@ -59,6 +59,7 @@ async function sendInvite(user, actorName) {
       managerName: full.manager?.name,
     }),
   });
+  return job.sent !== false;
 }
 
 async function nextEmployeeNo() {

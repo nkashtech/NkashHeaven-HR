@@ -85,8 +85,8 @@ const MASKED = ['idNumber', 'taxNumber', 'passportNumber', 'bankAccount']
 // A saved profile as editable values. Masked numbers stay blank and only change if retyped.
 export function toForm(p) {
   const out = {}
-  ALL_KEYS.forEach((k) => { out[k] = MASKED.includes(k) || k === 'birthDate' ? '' : (p[k] ?? '') })
+  ALL_KEYS.forEach((k) => { out[k] = MASKED.includes(k) ? '' : (p[k] ?? '') })
   SECTIONS.filter((s) => s.list).forEach((s) => { out[s.list] = p[s.list] || [] })
   return out
 }
-export const masksOf = (p) => Object.fromEntries(MASKED.map((k) => [k, p[k] || '']).concat([['birthDate', p.birthday || '']]))
+export const masksOf = (p) => Object.fromEntries(MASKED.map((k) => [k, p[k] || '']))

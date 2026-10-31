@@ -11,6 +11,7 @@ const { setFallbackCompany, runAs, asPlatform } = require('../lib/tenant');
 const { STARTER_ROLES, SCOPE_TO_LEVEL } = require('../lib/permissions');
 const { setupCompany } = require('../lib/company-setup');
 const { Prisma } = require('@prisma/client');
+const { userView } = require('../api/routes/auth');
 const { today, addDays, mondayOf, toDbDate, zonedToUtc, fromDbDate, weekdayKey } = require('../lib/time');
 
 const PASSWORD = 'Test@Password2026!';
@@ -1727,5 +1728,38 @@ describe('company invites and deletion', () => {
     // Foreign key checks must be back on for whichever request uses the connection next.
     const rows = await Promise.all([1, 2, 3, 4].map(() => prisma.$queryRawUnsafe('SELECT @@FOREIGN_KEY_CHECKS AS fk')));
     rows.forEach(([{ fk }]) => expect(Number(fk)).toBe(1));
+  });
+});
+
+describe('first sign-in details', () => {
+  const viewOf = async (where) => asPlatform(async () => {
+    const user = await prisma.user.findFirst({ where });
+    return runAs(user.companyId, () => userView(user));
+  });
+
+  it('asks the company admin only', async () => {
+    const company = (await as('super').post('/system/companies', { name: 'Setup Co', adminName: 'Owner', adminEmail: 'owner@test.co' })).body.company;
+    expect((await viewOf({ companyId: company.id })).setupCompleted).toBe(false);
+    await asPlatform(async () => { await prisma.user.updateMany({ where: { id: ids.emp }, data: { setupCompleted: false } }); });
+    expect((await viewOf({ id: ids.emp })).setupCompleted).toBe(true);
+  });
+
+  it('shows a saved date of birth in full to its owner and HR, but not to their manager', async () => {
+    await asPlatform(async () => { await prisma.profile.update({ where: { userId: ids.emp }, data: { birthDate: null } }); });
+    expect((await as('emp').patch('/profile/me', { birthDate: '1995-03-12', emergencyName: 'Sam' })).status).toBe(200);
+    const mine = (await as('emp').get('/profile/me')).body.profile;
+    expect(mine.birthDate).toBe('1995-03-12');
+    expect(mine.emergencyName).toBe('Sam');
+    expect((await as('hr').get(`/profile/${ids.emp}`)).body.profile.birthDate).toBe('1995-03-12');
+    const lead = await as('lead').get(`/profile/${ids.emp}`);
+    expect(lead.status).toBe(200);
+    expect(lead.body.profile.birthDate).toBeUndefined();
+  });
+
+  it('saving the profile again does not send an unchanged date of birth to HR', async () => {
+    const before = await asPlatform(async () => await prisma.changeRequest.count({ where: { userId: ids.emp } }));
+    const res = await as('emp').patch('/profile/me', { birthDate: '1995-03-12' });
+    expect(res.body.pendingRequest).toBeNull();
+    expect(await asPlatform(async () => await prisma.changeRequest.count({ where: { userId: ids.emp } }))).toBe(before);
   });
 });

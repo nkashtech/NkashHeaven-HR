@@ -103,7 +103,7 @@ There are no fixed roles. Company Admin, Manager and Employee are starter roles 
 | EMP-4 | New user | Open the link from the email | Page says "Welcome, [name]", email is filled in, the field says Temporary password |
 | EMP-5 | New user | Enter the temporary password | Forced to Choose your password. No other screen is reachable |
 | EMP-6 | New user | Try a weak password, then the temporary one again | Checklist stays incomplete, or the server refuses it |
-| EMP-7 | New user | Set a valid password and finish setup | Lands on the dashboard. The admin gets an "activated" notification |
+| EMP-7 | New user | Set a valid password. Only a company admin then sees the setup steps | Lands on the dashboard. The admin gets an "activated" notification |
 | EMP-8 | Any | Open the company sign-in page directly | Says "Sign in", no mention of a temporary password |
 | EMP-9 | Naledi | Resend an invite, then try the old temporary password | Old password is rejected |
 | EMP-10 | Any | Enter a wrong password 5 times | Account locks for 15 minutes |

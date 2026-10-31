@@ -5,7 +5,7 @@ import api, { errorMessage } from '../../services/api'
 import { AuthShell } from './Login'
 import { Field } from '../../components/ui'
 
-// ONB-04: confirm profile, birthday and emergency contact, optional calendar.
+// ONB-04: the company admin confirms their profile, birthday and emergency contact, with an optional calendar. Nobody else sees this.
 export default function SetupWizard() {
   const { refresh } = useAuth()
   const [step, setStep] = useState(1)
@@ -16,7 +16,7 @@ export default function SetupWizard() {
   useEffect(() => {
     api.get('/profile/me').then(({ data }) => {
       setProfile(data.profile)
-      setForm((f) => ({ ...f, preferredName: data.profile.preferredName, phone: data.profile.phone, emergencyName: data.profile.emergencyName, emergencyRelation: data.profile.emergencyRelation, emergencyPhone: data.profile.emergencyPhone }))
+      setForm((f) => ({ ...f, preferredName: data.profile.preferredName, phone: data.profile.phone, birthDate: data.profile.birthDate, emergencyName: data.profile.emergencyName, emergencyRelation: data.profile.emergencyRelation, emergencyPhone: data.profile.emergencyPhone }))
     })
   }, [])
 

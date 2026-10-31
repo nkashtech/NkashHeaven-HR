@@ -55,7 +55,9 @@ async function userView(user, session) {
   return {
     id: user.id, name: user.name, company: { name: company.name, slug: company.slug, isPlatform: company.isPlatform }, roleName: accessRole?.name || (user.role === 'SUPER_ADMIN' ? 'Super Admin' : null), branding: { primaryColor: settings.branding.primaryColor, hasLogo: Boolean(settings.branding.logoFileId) }, preferredName: profile?.preferredName || null, email: user.email, role: user.role, jobTitle: user.jobTitle,
     employeeNo: user.employeeNo, department: user.department || null, timezone: user.timezone, startDate: user.startDate,
-    mustChangePassword: user.mustChangePassword, setupCompleted: user.setupCompleted, twoFactorOn: user.twoFactorOn,
+    mustChangePassword: user.mustChangePassword, twoFactorOn: user.twoFactorOn,
+    // Only the company admin confirms their own details. HR enters everyone else's when creating them.
+    setupCompleted: user.setupCompleted || !(await isOwner(user)),
     mustEnrollTwoFactor: isAdmin(user) && settings.security.adminTwoFactorRequired && !user.twoFactorOn,
     theme: user.theme, language: user.language, dateFormat: user.dateFormat, showBirthday: user.showBirthday, showPhone: user.showPhone, doNotDisturb: user.doNotDisturb, chatDigest: user.chatDigest,
     photoFileId: profile?.photoFileId || null,

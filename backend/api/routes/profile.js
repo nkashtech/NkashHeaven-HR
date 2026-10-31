@@ -78,7 +78,7 @@ async function profileView(userId) {
     id: user.id, name: user.name, email: user.email, employeeNo: user.employeeNo, jobTitle: user.jobTitle, role: user.role,
     department: user.department?.name || null, team: user.team?.name || null, manager: user.manager?.name || null, schedule: user.schedule?.name || null,
     startDate: fromDbDate(user.startDate), salaryBand: user.salaryBand,
-    legalName: p.legalName || user.name, preferredName: p.preferredName || '', birthday: birthdayMonthDay(p.birthDate), hasBirthDate: Boolean(p.birthDate),
+    legalName: p.legalName || user.name, preferredName: p.preferredName || '', birthDate: p.birthDate ? fromDbDate(p.birthDate) : '', birthday: birthdayMonthDay(p.birthDate), hasBirthDate: Boolean(p.birthDate),
     idNumber: mask(decrypt(p.idNumberEnc)), taxNumber: mask(decrypt(p.taxNumberEnc)), passportNumber: mask(decrypt(p.passportNumberEnc)), signatureFileId: p.signatureFileId || null,
     ...Object.fromEntries(Object.keys(INSTANT).filter((k) => !['photoFileId', 'signatureFileId', ...LIST_FIELDS].includes(k)).map((k) => [k, (p[k] instanceof Date ? fromDbDate(p[k]) : p[k]) || ''])),
     ...Object.fromEntries(LIST_FIELDS.map((k) => [k, p[k] || []])),
@@ -241,7 +241,7 @@ router.get('/:id', h(async (req, res) => {
   const profile = await profileView(id);
   // Leaders see job and contact details; ID and bank stay with HR.
   if (!isAdmin(req.user) && id !== req.user.id) {
-    for (const key of ['idNumber', 'taxNumber', 'passportNumber', 'bankName', 'bankAccount', 'bankAccountType', 'salaryBand', 'address', 'presentAddress', 'religion', 'race', 'bloodGroup', 'maritalStatus', 'dependents']) delete profile[key];
+    for (const key of ['birthDate', 'idNumber', 'taxNumber', 'passportNumber', 'bankName', 'bankAccount', 'bankAccountType', 'salaryBand', 'address', 'presentAddress', 'religion', 'race', 'bloodGroup', 'maritalStatus', 'dependents']) delete profile[key];
   }
   res.json({ profile });
 }));

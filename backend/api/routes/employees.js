@@ -8,6 +8,7 @@ const { tempPassword } = require('../../lib/crypto');
 const { audit } = require('../../lib/audit');
 const { getSettings } = require('../../lib/settings');
 const { toDbDate, fromDbDate, today, yearOf } = require('../../lib/time');
+const { splitName } = require('../../lib/names');
 const { welcomeHtml, getTemplate, queueEmail, companyUrl, brand, fill } = require('../../lib/email');
 const { ALL, SCOPE_TO_LEVEL, permissionsOf, isOwner, withOverrides, clearPermissionCache } = require('../../lib/permissions');
 const { saveHrProfile } = require('./profile');
@@ -134,7 +135,7 @@ async function createUser(body, req) {
       name: body.name.trim(), email, employeeNo, role: SCOPE_TO_LEVEL[accessRole.scope], accessRoleId: accessRole.id, jobTitle: body.jobTitle, startDate: toDbDate(body.startDate),
       departmentId: body.departmentId ? Number(body.departmentId) : null, teamId: body.teamId ? Number(body.teamId) : null, managerId: body.managerId ? Number(body.managerId) : null,
       scheduleId: body.scheduleId ? Number(body.scheduleId) : null,
-      salaryBand: body.salaryBand, profile: { create: { legalName: body.name.trim() } },
+      salaryBand: body.salaryBand, profile: { create: { legalName: body.name.trim(), ...splitName(body.name) } },
     },
   });
   if (body.profile) await saveHrProfile(user.id, body.profile);
@@ -158,7 +159,7 @@ async function createUser(body, req) {
 
 router.get('/options', h(async (req, res) => {
   const [departments, teams, schedules, leaders, leaveTypes, roles] = await Promise.all([
-    prisma.department.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+    prisma.department.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, managerId: true } }),
     prisma.team.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, departmentId: true } }),
     prisma.workSchedule.findMany({ where: { active: true }, select: { id: true, name: true } }),
     prisma.user.findMany({ where: { active: true }, orderBy: { name: 'asc' }, select: { id: true, name: true, role: true, departmentId: true } }),

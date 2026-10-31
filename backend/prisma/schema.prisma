@@ -285,6 +285,7 @@ model Profile {
   emergencyEmail    String?
   salutation      String?
   firstName       String?
+  middleName      String?
   lastName        String?
   pronoun         String?
   gender          String?

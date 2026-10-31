@@ -1763,3 +1763,48 @@ describe('first sign-in details', () => {
     expect(await asPlatform(async () => await prisma.changeRequest.count({ where: { userId: ids.emp } }))).toBe(before);
   });
 });
+
+describe('name fields', () => {
+  it('splits a name typed on one line', () => {
+    const { splitName, fullName } = require('../lib/names');
+    expect(splitName('Thabo van der Merwe')).toEqual({ firstName: 'Thabo', lastName: 'van der Merwe' });
+    expect(splitName('Cher')).toEqual({ firstName: 'Cher', lastName: null });
+    expect(fullName({ firstName: 'Ann', middleName: null, lastName: 'Lee' })).toBe('Ann Lee');
+  });
+
+  it('HR sets the three names and the account name follows', async () => {
+    const res = await as('hr').post('/employees', { firstName: 'Nomsa', lastName: 'Dube', name: 'Nomsa Grace Dube', email: 'nomsa@test.co', startDate: '2026-10-01', jobTitle: 'Clerk', profile: { firstName: 'Nomsa', middleName: 'Grace', lastName: 'Dube' } });
+    expect(res.status).toBe(201);
+    const id = res.body.employee.id;
+    const seen = (await as('hr').get(`/profile/${id}`)).body.profile;
+    expect([seen.firstName, seen.middleName, seen.lastName, seen.name]).toEqual(['Nomsa', 'Grace', 'Dube', 'Nomsa Grace Dube']);
+    await as('hr').patch(`/employees/${id}`, { profile: { middleName: '' } });
+    expect((await as('hr').get(`/profile/${id}`)).body.profile.name).toBe('Nomsa Dube');
+  });
+
+  it('an employee adds a middle name at once, but a new surname waits for HR', async () => {
+    await asPlatform(async () => { await prisma.profile.update({ where: { userId: ids.emp }, data: { firstName: 'Lee', middleName: null, lastName: 'Old' } }); });
+    await as('emp').patch('/profile/me', { middleName: 'Mid' });
+    expect((await as('emp').get('/profile/me')).body.profile.name).toBe('Lee Mid Old');
+    const res = await as('emp').patch('/profile/me', { lastName: 'New' });
+    expect(res.body.pendingRequest).toBeTruthy();
+    expect((await as('emp').get('/profile/me')).body.profile.lastName).toBe('Old');
+    expect((await as('hr').post(`/profile/requests/${res.body.pendingRequest}/approve`)).status).toBe(200);
+    expect((await as('emp').get('/profile/me')).body.profile.name).toBe('Lee Mid New');
+  });
+
+  it('the company admin changes their own details without an approver', async () => {
+    const company = (await as('super').post('/system/companies', { name: 'Owner Co', adminName: 'Olive Oak', adminEmail: 'olive@test.co' })).body.company;
+    const owner = await asPlatform(async () => await prisma.user.findFirst({ where: { companyId: company.id } }));
+    const { token } = await runAs(company.id, async () => require('../api/routes/auth').createSession({ headers: {}, ip: '127.0.0.1' }, owner, false));
+    await asPlatform(async () => { await prisma.user.update({ where: { id: owner.id }, data: { mustChangePassword: false } }); await prisma.company.update({ where: { id: company.id }, data: { settings: { security: { adminTwoFactorRequired: false } } } }); });
+    clearSettingsCache();
+    const auth = (r) => r.set('Authorization', `Bearer ${token}`);
+    const res = await auth(request(app).patch('/api/profile/me')).send({ lastName: 'Pine', birthDate: '1990-01-02' });
+    expect(res.status).toBe(200);
+    expect(res.body.pendingRequest).toBeNull();
+    expect(res.body.profile.name).toBe('Olive Pine');
+    await auth(request(app).patch('/api/profile/me')).send({ birthDate: '1991-02-03' });
+    expect((await auth(request(app).get('/api/profile/me'))).body.profile.birthDate).toBe('1991-02-03');
+  });
+});

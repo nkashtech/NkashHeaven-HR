@@ -6,6 +6,7 @@ const { HttpError, h, required, intParam } = require('../middleware/validation')
 const { getSettings, updateSettings, clearSettingsCache } = require('../../lib/settings');
 const { asPlatform, runAs } = require('../../lib/tenant');
 const { setupCompany, deleteCompany, slugify } = require('../../lib/company-setup');
+const { splitName } = require('../../lib/names');
 const { SCOPE_TO_LEVEL } = require('../../lib/permissions');
 const { audit, securityEvent } = require('../../lib/audit');
 const { listIntegrations, saveConfig, isConfigured, PROVIDERS } = require('../../lib/integrations');
@@ -201,7 +202,7 @@ router.post('/companies', superOnly, takeLogo, h(async (req, res) => {
     const user = await prisma.user.create({
       data: {
         name: req.body.adminName.trim(), email, employeeNo: 'EMP-0001', role: SCOPE_TO_LEVEL[role.scope], accessRoleId: role.id, jobTitle: 'Company Admin', startDate: new Date(`${today}T00:00:00Z`), timezone,
-        profile: { create: { legalName: req.body.adminName.trim() } },
+        profile: { create: { legalName: req.body.adminName.trim(), ...splitName(req.body.adminName) } },
       },
     });
     const { syncUserChannels } = require('../../lib/chat');

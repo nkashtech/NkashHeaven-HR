@@ -58,7 +58,7 @@ function Signature({ value, onSaved }) {
 }
 
 export default function Profile() {
-  const { refresh } = useAuth()
+  const { user, refresh } = useAuth()
   const { data, error, reload, setData } = useFetch('/profile/me')
   const { data: history, reload: reloadHistory } = useFetch('/profile/me/history')
   const [form, setForm] = useState(null)
@@ -127,7 +127,7 @@ export default function Profile() {
             {tab === 'signature' && <Signature value={p.signatureFileId} onSaved={(profile) => setData({ profile })} />}
             {SECTIONS.find((x) => x.key === tab) && (
               <>
-                <SectionFields section={SECTIONS.find((x) => x.key === tab)} value={form} onChange={setForm} masks={masksOf(p)} mode="self" />
+                <SectionFields section={SECTIONS.find((x) => x.key === tab)} value={form} onChange={setForm} masks={masksOf(p)} mode={user.isOwner ? 'owner' : 'self'} />
                 <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
                   <span className="text-[13px] text-ink-muted">{dirty ? 'Unsaved changes' : 'No unsaved changes'}</span>
                   <div className="flex gap-2">

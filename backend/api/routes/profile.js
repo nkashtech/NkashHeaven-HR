@@ -5,9 +5,10 @@ const { HttpError, h, required, intParam, isDate } = require('../middleware/vali
 const { encrypt, decrypt, mask } = require('../../lib/crypto');
 const { audit } = require('../../lib/audit');
 const { adminIds, canAccessUser, isAdmin } = require('../../lib/access');
-const { can } = require('../../lib/permissions');
+const { can, isOwner } = require('../../lib/permissions');
 const { notify } = require('../../lib/notify');
 const { toDbDate, fromDbDate } = require('../../lib/time');
+const { fullName } = require('../../lib/names');
 
 const router = express.Router();
 router.use(authenticate);
@@ -33,6 +34,9 @@ const stored = (field, v) => {
 // PRF-03: held in a change request until HR approves. Values with `enc` are stored encrypted.
 const SENSITIVE = {
   legalName: { label: 'Legal name' },
+  firstName: { label: 'First name' },
+  middleName: { label: 'Middle name' },
+  lastName: { label: 'Surname' },
   birthDate: { label: 'Date of birth' },
   idNumber: { label: 'ID number', enc: 'idNumberEnc' },
   taxNumber: { label: 'Tax number', enc: 'taxNumberEnc' },
@@ -41,6 +45,15 @@ const SENSITIVE = {
   bankAccountType: { label: 'Account type' },
   passportNumber: { label: 'Passport number', enc: 'passportNumberEnc' },
 };
+
+// The name on the account is always built from the name fields.
+async function syncName(userId) {
+  const profile = await prisma.profile.findUnique({ where: { userId } });
+  const name = fullName(profile);
+  if (!name) return;
+  await prisma.user.update({ where: { id: userId }, data: { name } });
+  await prisma.profile.update({ where: { userId }, data: { legalName: name } });
+}
 
 // HR setting or correcting someone's record directly. No change request: HR is the approver.
 async function saveHrProfile(userId, body) {
@@ -51,7 +64,10 @@ async function saveHrProfile(userId, body) {
     if (def.enc) data[def.enc] = encrypt(body[field]);
     else if (field === 'birthDate') { if (!isDate(body[field])) throw new HttpError(400, 'Date of birth must be a date'); data.birthDate = toDbDate(body[field]); } else data[field] = body[field];
   }
+  // Unlike the other sensitive fields, a middle name can be cleared.
+  if (body.middleName !== undefined) data.middleName = body.middleName || null;
   await prisma.profile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
+  if (data.firstName || data.lastName || body.middleName !== undefined) await syncName(userId);
 }
 
 function sensitiveValue(profile, field) {
@@ -78,7 +94,7 @@ async function profileView(userId) {
     id: user.id, name: user.name, email: user.email, employeeNo: user.employeeNo, jobTitle: user.jobTitle, role: user.role,
     department: user.department?.name || null, team: user.team?.name || null, manager: user.manager?.name || null, schedule: user.schedule?.name || null,
     startDate: fromDbDate(user.startDate), salaryBand: user.salaryBand,
-    legalName: p.legalName || user.name, preferredName: p.preferredName || '', birthDate: p.birthDate ? fromDbDate(p.birthDate) : '', birthday: birthdayMonthDay(p.birthDate), hasBirthDate: Boolean(p.birthDate),
+    legalName: p.legalName || user.name, firstName: p.firstName || '', middleName: p.middleName || '', lastName: p.lastName || '', preferredName: p.preferredName || '', birthDate: p.birthDate ? fromDbDate(p.birthDate) : '', birthday: birthdayMonthDay(p.birthDate), hasBirthDate: Boolean(p.birthDate),
     idNumber: mask(decrypt(p.idNumberEnc)), taxNumber: mask(decrypt(p.taxNumberEnc)), passportNumber: mask(decrypt(p.passportNumberEnc)), signatureFileId: p.signatureFileId || null,
     ...Object.fromEntries(Object.keys(INSTANT).filter((k) => !['photoFileId', 'signatureFileId', ...LIST_FIELDS].includes(k)).map((k) => [k, (p[k] instanceof Date ? fromDbDate(p[k]) : p[k]) || ''])),
     ...Object.fromEntries(LIST_FIELDS.map((k) => [k, p[k] || []])),
@@ -129,18 +145,29 @@ router.patch('/me', h(async (req, res) => {
       instant.birthDate = toDbDate(body[field]);
       continue;
     }
+    if (field === 'middleName' && !old) {
+      instant.middleName = body[field];
+      continue;
+    }
     payload[field] = body[field];
     sensitive.push({ field, label: def.label, oldMasked: def.enc ? mask(old) : old, newMasked: def.enc ? mask(body[field]) : body[field] });
   }
 
   if (Object.keys(instant).length) {
     await prisma.profile.update({ where: { userId: req.user.id }, data: instant });
+    if (instant.middleName) await syncName(req.user.id);
   }
   if (changes.length) {
     await prisma.profileChange.createMany({ data: changes.map((c) => ({ ...c, userId: req.user.id, actorId: req.user.id })) });
     await audit(req, { entity: 'Profile', entityId: req.user.id, action: 'profile.updated', before: Object.fromEntries(changes.map((c) => [c.field, c.oldValue])), after: Object.fromEntries(changes.map((c) => [c.field, c.newValue])) });
     const summary = changes.map((c) => `${c.field}: ${c.oldValue || '(empty)'} → ${c.newValue || '(empty)'}`).join('; ');
     await notify(await adminIds(), { type: 'profile.updated', title: `${req.user.name} updated ${changes.map((c) => c.field.toLowerCase()).join(', ')}`, body: summary.slice(0, 900), link: '/hr/requests' });
+  }
+  // The company admin has nobody above them to approve their own details.
+  if (sensitive.length && (await isOwner(req.user))) {
+    await saveHrProfile(req.user.id, payload);
+    await audit(req, { entity: 'Profile', entityId: req.user.id, action: 'profile.updated', after: { fields: sensitive.map((s) => s.label) } });
+    sensitive.length = 0;
   }
   let request = null;
   if (sensitive.length) {
@@ -194,6 +221,7 @@ router.post('/requests/:id/approve', requirePerm('profile.review'), h(async (req
     await tx.changeRequest.update({ where: { id }, data: { status: 'APPROVED', decidedById: req.user.id, decidedAt: new Date(), payloadEnc: null } });
     await audit(req, { entity: 'ChangeRequest', entityId: id, action: 'change_request.approved', after: { fields: row.summary.map((s) => s.label) } }, tx);
   });
+  if (payload.firstName || payload.middleName || payload.lastName) await syncName(row.userId);
   await notify(row.userId, { type: 'profile.decided', title: 'HR approved your profile change', body: row.summary.map((s) => s.label).join(', '), link: '/profile' });
   res.json({ ok: true });
 }));

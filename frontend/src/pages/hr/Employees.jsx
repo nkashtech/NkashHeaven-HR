@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { SECTIONS, SectionFields, masksOf, toForm } from '../../components/EmployeeDetails'
+import { SECTIONS, SectionFields, masksOf, properName, toForm } from '../../components/EmployeeDetails'
 import CardView from '../cards/CardView'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Download, Plus, Search, Upload, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useFetch } from '../../components/hooks'
+import { useAuth } from '../../contexts/AuthContext'
 import { Avatar, Field, Kpi, Modal, PageError, PageHeader, PageLoader, Pill, StatusPill, Table } from '../../components/ui'
 import { companyToday, fmtDay, fmtDateTime } from '../../utils/format'
 import api, { errorMessage } from '../../services/api'
@@ -12,11 +13,14 @@ import api, { errorMessage } from '../../services/api'
 const ROLE_TONE = { EMPLOYEE: 'neutral', MANAGER: 'info', ADMIN: 'brand' }
 const INVITE = { NONE: 'Not invited', SENT: 'Sent', OPENED: 'Opened', ACTIVATED: 'Activated', EXPIRED: 'Expired', BOUNCED: 'Bounced' }
 
+const PERSONAL_MAIL = ['gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'yahoo.com', 'icloud.com', 'proton.me']
+
 const STEPS = [['job', 'Employment'], ...SECTIONS.map((x) => [x.key, x.label])]
 
 function EmployeeForm({ options, employee, onClose, onSaved }) {
+  const { user } = useAuth()
   const editing = Boolean(employee)
-  const [names] = useState(() => { const p = (employee?.name || '').split(' '); return { firstName: p[0] || '', lastName: p.slice(1).join(' ') } })
+  const [names] = useState(() => { const p = (employee?.name || '').split(' '); return { firstName: p[0] || '', middleName: '', lastName: p.slice(1).join(' ') } })
   const [form, setForm] = useState({
     ...names, email: employee?.email || '', employeeNo: employee?.employeeNo || options.nextEmployeeNo, jobTitle: employee?.jobTitle || '',
     roleId: employee?.accessRole?.id || options.roles.find((r) => r.scope === 'SELF')?.id || '', departmentId: employee?.department?.id || '', teamId: employee?.team?.id || '', managerId: employee?.manager?.id || '',
@@ -28,14 +32,30 @@ function EmployeeForm({ options, employee, onClose, onSaved }) {
   const [busy, setBusy] = useState(false)
   useEffect(() => {
     if (!editing) return
-    api.get(`/profile/${employee.id}`).then(({ data }) => { setDetails(toForm(data.profile)); setMasks(masksOf(data.profile)) }).catch((e) => toast.error(errorMessage(e)))
+    api.get(`/profile/${employee.id}`).then(({ data }) => { setDetails(toForm(data.profile)); setMasks(masksOf(data.profile)); setForm((f) => ({ ...f, firstName: data.profile.firstName || f.firstName, middleName: data.profile.middleName, lastName: data.profile.lastName || f.lastName })) }).catch((e) => toast.error(errorMessage(e)))
   }, [editing, employee])
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  // Names tidy themselves, and at a company with its own domain the work email follows the same pattern as the person adding it.
+  const finishName = (k) => () => {
+    const next = { ...form, [k]: properName(form[k]) }
+    const domain = user.email.split('@')[1]
+    const handle = (s) => s.trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+    if (!editing && !next.email && next.firstName && next.lastName && !PERSONAL_MAIL.includes(domain)) next.email = `${handle(next.firstName)}.${handle(next.lastName)}@${domain}`
+    setForm(next)
+  }
+  // The department brings its manager, and its team when it only has one.
+  const chooseDepartment = (e) => {
+    const departmentId = e.target.value
+    const department = options.departments.find((d) => d.id === Number(departmentId))
+    const teams = options.teams.filter((t) => t.departmentId === Number(departmentId))
+    setForm({ ...form, departmentId, teamId: teams.length === 1 ? teams[0].id : '', managerId: form.managerId || (department?.managerId !== employee?.id && department?.managerId) || '' })
+  }
   const submit = async (e) => {
     e.preventDefault()
     setBusy(true)
     try {
-      const body = { ...form, name: `${form.firstName} ${form.lastName}`.trim(), profile: details }
+      const { firstName, middleName, lastName } = form
+      const body = { ...form, name: [firstName, middleName, lastName].filter(Boolean).join(' '), profile: { ...details, firstName, middleName, lastName } }
       if (editing) await api.patch(`/employees/${employee.id}`, body)
       else await api.post('/employees', body)
       toast.success(editing ? 'Saved' : 'Employee created and welcome email queued')
@@ -57,13 +77,14 @@ function EmployeeForm({ options, employee, onClose, onSaved }) {
         <div className="max-h-[60vh] overflow-y-auto pr-1">
           {step === 'job' ? (
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="First name"><input required className="input" value={form.firstName} onChange={set('firstName')} /></Field>
-              <Field label="Last name"><input required className="input" value={form.lastName} onChange={set('lastName')} /></Field>
+              <Field label="First name"><input required className="input" value={form.firstName} onChange={set('firstName')} onBlur={finishName('firstName')} /></Field>
+              <Field label="Middle name"><input className="input" value={form.middleName} onChange={set('middleName')} onBlur={finishName('middleName')} /></Field>
+              <Field label="Surname"><input required className="input" value={form.lastName} onChange={set('lastName')} onBlur={finishName('lastName')} /></Field>
               <Field label="Work email" hint={editing ? 'To change it, resend the invite.' : 'Any provider, including Gmail.'}><input type="email" required disabled={editing} className="input" placeholder="name@gmail.com" value={form.email} onChange={set('email')} /></Field>
               <Field label="Employee no."><input required disabled={editing} className="input" value={form.employeeNo} onChange={set('employeeNo')} /></Field>
               <Field label="Position" hint="Shown under their name, e.g. Junior Developer."><input required className="input" placeholder="Junior Developer" value={form.jobTitle} onChange={set('jobTitle')} /></Field>
               <Field label="Role" hint="Roles are set up under Roles."><select className="input" value={form.roleId} onChange={set('roleId')}>{options.roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select></Field>
-              <Field label="Department"><select className="input" value={form.departmentId} onChange={set('departmentId')}><option value="">None</option>{options.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
+              <Field label="Department"><select className="input" value={form.departmentId} onChange={chooseDepartment}><option value="">None</option>{options.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
               <Field label="Team"><select className="input" value={form.teamId} onChange={set('teamId')}><option value="">None</option>{options.teams.filter((t) => !form.departmentId || !t.departmentId || t.departmentId === Number(form.departmentId)).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}</select></Field>
               <Field label="Manager" hint="Approves their leave before HR, if the leave type asks for it."><select className="input" value={form.managerId} onChange={set('managerId')}><option value="">None</option>{others(options.managers).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
               <Field label="Work schedule"><select className="input" value={form.scheduleId} onChange={set('scheduleId')}>{options.schedules.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select></Field>

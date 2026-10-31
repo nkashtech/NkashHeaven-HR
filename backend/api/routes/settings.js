@@ -71,7 +71,7 @@ router.get('/security', requirePerm('org.configure'), h(async (req, res) => {
 router.put('/security', requirePerm('org.configure'), h(async (req, res) => {
   const { security, chat } = req.body;
   if (security) {
-    if (security.minPasswordLength !== undefined && Number(security.minPasswordLength) < 12) throw new HttpError(400, 'Passwords must stay at least 12 characters');
+    if (security.minPasswordLength !== undefined && Number(security.minPasswordLength) < 8) throw new HttpError(400, 'Passwords must stay at least 8 characters');
     await updateSettings('security', security);
   }
   if (chat) await updateSettings('chat', chat);

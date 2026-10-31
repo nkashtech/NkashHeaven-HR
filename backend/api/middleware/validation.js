@@ -28,7 +28,7 @@ function intParam(value, name = 'id') {
 }
 
 // ONB-03 rules. Returns the failures so the screen can show them as a checklist.
-function passwordProblems(password, { minLength = 12 } = {}) {
+function passwordProblems(password, { minLength = 8 } = {}) {
   const p = String(password || '');
   const problems = [];
   if (p.length < minLength) problems.push(`At least ${minLength} characters`);

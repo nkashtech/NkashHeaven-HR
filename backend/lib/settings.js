@@ -6,7 +6,7 @@ const DEFAULTS = {
   attendance: { lockDate: null, graceMinutes: 10, autoCheckoutHours: 4 },
   timesheets: { roundingMinutes: 15, allowLogOnLeave: true, reminderDay: 5, reminderHour: 15, workflowId: null },
   security: {
-    minPasswordLength: 12, sessionIdleHours: 8, adminTwoFactorRequired: true, ipAllowlist: [],
+    minPasswordLength: 8, sessionIdleHours: 8, adminTwoFactorRequired: true, ipAllowlist: [],
     lockoutAttempts: 5, lockoutMinutes: 15,
   },
   chat: { retentionMonths: 12 },

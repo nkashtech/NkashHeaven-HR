@@ -89,7 +89,7 @@ Seed the live database once. This creates only the platform and the Super Admin 
 docker compose -f docker-compose.prod.yml exec app npm run db:seed:prod
 ```
 
-Running it again changes nothing. To use another address, add `-e SUPER_ADMIN_EMAIL=...`. To choose the first password yourself, add `-e SUPER_ADMIN_PASSWORD=...` (12 characters or more, with upper and lower case, a number and a symbol). It still has to be changed at first sign-in. Never commit a real password to this repo.
+Running it again changes nothing. To use another address, add `-e SUPER_ADMIN_EMAIL=...`. To choose the first password yourself, add `-e SUPER_ADMIN_PASSWORD=...` (8 characters or more, with upper and lower case, a number and a symbol). It still has to be changed at first sign-in. Never commit a real password to this repo.
 
 Then sign in at `https://your-domain/login` with Company code empty, choose a password, set up 2FA, and create your company under Companies. Your company's admin gets the welcome email. Give staff the link shown on the Companies screen.
 

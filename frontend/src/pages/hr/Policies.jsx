@@ -553,7 +553,7 @@ function Security() {
   return (
     <Card title="Security rules">
       <form onSubmit={save} className="grid max-w-2xl gap-3 sm:grid-cols-2">
-        <Field label="Minimum password length"><input type="number" min="12" className="input" value={form.security.minPasswordLength} onChange={(e) => sec('minPasswordLength', e.target.value)} /></Field>
+        <Field label="Minimum password length"><input type="number" min="8" className="input" value={form.security.minPasswordLength} onChange={(e) => sec('minPasswordLength', e.target.value)} /></Field>
         <Field label="Session timeout (idle hours)"><input type="number" min="1" className="input" value={form.security.sessionIdleHours} onChange={(e) => sec('sessionIdleHours', e.target.value)} /></Field>
         <Field label="Chat retention (months)"><input type="number" min="1" className="input" value={form.chat.retentionMonths} onChange={(e) => setForm({ ...form, chat: { retentionMonths: e.target.value } })} /></Field>
         <Field label="IP allowlist" hint="Comma-separated. Empty allows any network."><input className="input" value={form.security.ipAllowlist} onChange={(e) => sec('ipAllowlist', e.target.value)} /></Field>

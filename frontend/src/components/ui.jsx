@@ -2,7 +2,7 @@ import { Component, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Loader2, X } from 'lucide-react'
 import { initials } from '../utils/format'
-import { session } from '../services/api'
+import { API_URL, session } from '../services/api'
 
 export const Spinner = ({ className = '' }) => <Loader2 className={`animate-spin text-ink-muted ${className}`} size={20} />
 
@@ -94,7 +94,7 @@ function AuthedImage({ fileId, alt }) {
   useEffect(() => {
     let url
     let live = true
-    fetch(`/api/files/${fileId}`, { headers: { Authorization: `Bearer ${session.token}` } })
+    fetch(`${API_URL}/files/${fileId}`, { headers: { Authorization: `Bearer ${session.token}` } })
       .then((r) => (r.ok ? r.blob() : null))
       .then((b) => { if (b && live) { url = URL.createObjectURL(b); setSrc(url) } })
       .catch(() => {})

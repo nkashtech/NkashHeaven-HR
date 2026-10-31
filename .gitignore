@@ -8,3 +8,5 @@ backend/backups/
 backend/mysql-data/
 coverage
 frontend/dist
+!frontend/.env.production
+.env.vercel

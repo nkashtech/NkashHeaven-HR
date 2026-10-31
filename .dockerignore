@@ -5,3 +5,4 @@ backend/mysql-data
 backend/uploads
 backend/backups
 .git
+backend/.env.vercel

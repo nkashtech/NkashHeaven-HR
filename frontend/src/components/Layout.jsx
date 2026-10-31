@@ -9,13 +9,13 @@ import { useLive } from '../contexts/LiveContext'
 import { Avatar, ErrorBoundary } from './ui'
 import { useInterval } from './hooks'
 import { clock, fmtTime, ROLE_LABEL, roleShort } from '../utils/format'
-import api, { company, session } from '../services/api'
+import api, { API_URL, company, session } from '../services/api'
 
 // Asked once per page load: the login screen needs it before anyone is signed in.
 const brandings = new Map()
 export const clearBranding = () => { brandings.clear(); window.dispatchEvent(new Event('branding:changed')) }
 const loadBranding = (slug) => {
-  if (!brandings.has(slug)) brandings.set(slug, fetch(`/api/public/${slug}/branding`).then((r) => (r.ok ? r.json() : {})).catch(() => ({})))
+  if (!brandings.has(slug)) brandings.set(slug, fetch(`${API_URL}/public/${slug}/branding`).then((r) => (r.ok ? r.json() : {})).catch(() => ({})))
   return brandings.get(slug)
 }
 
@@ -40,7 +40,7 @@ export function Logo({ size = 30, dark }) {
           if (!live) return
           const version = Date.now()
           setCustom(b.hasLogo ? `${slug}?v=${version}` : null)
-          setFavicon(b.hasLogo ? `/api/public/${slug}/logo/main?v=${version}` : '/logo.svg')
+          setFavicon(b.hasLogo ? `${API_URL}/public/${slug}/logo/main?v=${version}` : '/logo.svg')
           setName(b.name || null)
           if (b.name) document.title = b.name
         })
@@ -53,7 +53,7 @@ export function Logo({ size = 30, dark }) {
   return (
     <div className="flex items-center gap-2.5">
       {custom
-        ? <img src={`/api/public/${custom.split('?')[0]}/logo/main?${custom.split('?')[1]}`} alt="" style={{ height: size, maxWidth: 90 }} className="object-contain" />
+        ? <img src={`${API_URL}/public/${custom.split('?')[0]}/logo/main?${custom.split('?')[1]}`} alt="" style={{ height: size, maxWidth: 90 }} className="object-contain" />
         : <img src="/logo.svg" alt="" style={{ width: size, height: size }} />}
       <span className="font-bold text-[16px] leading-none tracking-tight">
         {name ? <span className={dark ? 'text-white' : ''}>{name}</span> : <><span className={dark ? 'text-white' : ''}>NkashHeaven</span><span className={dark ? 'text-white' : 'text-brand'}>-HR</span></>}

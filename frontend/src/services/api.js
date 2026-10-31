@@ -1,6 +1,10 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: import.meta.env.VITE_API_URL || '/api', timeout: 30000 })
+// VITE_API_URL points at the API when it's hosted apart from this app. Left empty, it's the same site.
+export const API_URL = import.meta.env.VITE_API_URL || '/api'
+export const SOCKET_URL = API_URL.startsWith('http') ? new URL(API_URL).origin : undefined
+
+const api = axios.create({ baseURL: API_URL, timeout: 30000 })
 
 // "Keep me signed in" stores the session in localStorage, otherwise sessionStorage.
 export const session = {

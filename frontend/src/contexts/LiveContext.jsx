@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 import toast from 'react-hot-toast'
-import api, { session, errorMessage } from '../services/api'
+import api, { SOCKET_URL, session, errorMessage } from '../services/api'
 import { useAuth } from './AuthContext'
 
 const LiveContext = createContext(null)
@@ -46,7 +46,7 @@ export function LiveProvider({ children }) {
   }, [refreshAttendance, refreshCounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    const socket = io({ auth: { token: session.token }, transports: ['websocket', 'polling'] })
+    const socket = io(SOCKET_URL, { auth: { token: session.token }, transports: ['websocket', 'polling'] })
     socketRef.current = socket
     const fan = (event) => (payload) => (listeners.current.get(event) || []).forEach((fn) => fn(payload))
     ;['chat:message', 'chat:updated', 'chat:typing', 'presence', 'calendar:synced', 'connect'].forEach((e) => socket.on(e, fan(e)))

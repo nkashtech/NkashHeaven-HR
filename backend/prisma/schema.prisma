@@ -1,0 +1,1248 @@
+// NkashHeaven-HR data model. Every table carries companyId so the product can go multi-tenant later (FRD §7).
+// All timestamps are UTC (BR-01). Dates that mean a calendar day use @db.Date.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  EMPLOYEE
+  MANAGER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum InviteStatus {
+  NONE
+  SENT
+  OPENED
+  ACTIVATED
+  EXPIRED
+  BOUNCED
+}
+
+enum AttendanceSource {
+  BUTTON
+  CARD
+  AUTO
+  ADMIN
+}
+
+enum TimesheetState {
+  DRAFT
+  PARTLY_VALIDATED
+  VALIDATED
+}
+
+enum ApprovalSteps {
+  NONE
+  MANAGER
+  HR
+  MANAGER_HR
+}
+
+enum LeaveState {
+  DRAFT
+  SUBMITTED
+  PARTLY_APPROVED
+  APPROVED
+  REFUSED
+  CANCELLED
+}
+
+enum AllocationKind {
+  GRANT
+  ACCRUAL
+  CARRY_OVER
+  EXPIRY
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  CHANNEL
+  BOT
+}
+
+enum ChannelKind {
+  DEPARTMENT
+  GENERAL
+  ANNOUNCEMENTS
+}
+
+enum CalendarProvider {
+  GOOGLE
+  MICROSOFT
+}
+
+enum CalendarStatus {
+  CONNECTED
+  RECONNECT
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+  BOUNCED
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model Company {
+  id        Int      @id @default(autoincrement())
+  name      String
+  // The company's address: /c/<slug>
+  slug      String   @unique
+  isPlatform Boolean @default(false)
+  active    Boolean  @default(true)
+  timezone  String   @default("Africa/Johannesburg")
+  seats     Int      @default(100)
+  // Editable company policy; defaults live in lib/settings.js
+  settings  Json?
+  createdAt DateTime @default(now())
+}
+
+model Department {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  name      String
+  managerId Int?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  manager  User?    @relation("DepartmentManager", fields: [managerId], references: [id])
+  users    User[]   @relation("DepartmentUsers")
+  projects Project[]
+  teams    Team[]
+
+  @@unique([companyId, name])
+}
+
+// A working group inside a department, e.g. "Software Development" (shown on the person profile).
+model Team {
+  id           Int     @id @default(autoincrement())
+  companyId    Int
+  name         String
+  departmentId Int?
+  leadId       Int?
+  active       Boolean @default(true)
+
+  department Department? @relation(fields: [departmentId], references: [id])
+  lead       User?       @relation("TeamLead", fields: [leadId], references: [id])
+  members    User[]      @relation("TeamMembers")
+
+  @@unique([companyId, name])
+}
+
+model WorkSchedule {
+  id           Int     @id @default(autoincrement())
+  companyId    Int
+  name         String
+  // { mon: { start: "08:00", end: "17:00" }, ... }; a missing day is a day off
+  days         Json
+  breakMinutes Int     @default(60)
+  hoursPerDay  Float   @default(8)
+  active       Boolean @default(true)
+
+  users User[]
+}
+
+model PublicHoliday {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  date      DateTime @db.Date
+  name      String
+  // PUBLIC (national) or OFFICE (a closure set by HR). Both count as non-working days.
+  kind      String   @default("PUBLIC")
+
+  @@unique([companyId, date])
+}
+
+model User {
+  id               Int          @id @default(autoincrement())
+  companyId        Int
+  employeeNo       String
+  name             String
+  email            String
+  passwordHash     String?
+  // Data scope derived from the access role: EMPLOYEE own, MANAGER the people they lead, ADMIN whole company.
+  role             Role         @default(EMPLOYEE)
+  accessRoleId     Int?
+  // Screens and actions switched on or off for this person only, on top of their role: { key: true | false }
+  permissionOverrides Json?
+  cardToken        String?      @unique
+  lastCardScanAt   DateTime?
+  // Shown as the person's position, e.g. Junior Developer
+  jobTitle         String?
+  departmentId     Int?
+  teamId           Int?
+  managerId        Int?
+  scheduleId       Int?
+  timezone         String       @default("Africa/Johannesburg")
+  active           Boolean      @default(true)
+  archivedAt       DateTime?
+  startDate        DateTime     @db.Date
+  salaryBand       String?
+
+  // Onboarding (ONB)
+  mustChangePassword Boolean      @default(false)
+  tempPasswordExpiry DateTime?
+  inviteStatus       InviteStatus @default(NONE)
+  invitedAt          DateTime?
+  setupCompleted     Boolean      @default(false)
+  activatedAt        DateTime?
+
+  // Security
+  failedLogins  Int       @default(0)
+  lockedUntil   DateTime?
+  twoFactorOn   Boolean   @default(false)
+  twoFactorEnc  String?   @db.Text
+  resetTokenHash String?
+  resetTokenExp DateTime?
+  lastLoginAt   DateTime?
+
+  // Preferences (SET-01)
+  theme          String  @default("system")
+  language       String  @default("en")
+  dateFormat     String  @default("dd MMM yyyy")
+  showBirthday   Boolean @default(true)
+  showPhone      Boolean @default(true)
+  doNotDisturb   Boolean @default(false)
+  notifyPrefs    Json?
+  // Chat digest email when offline (UC-11)
+  chatDigest     Boolean @default(false)
+  lastDigestAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  department Department?   @relation("DepartmentUsers", fields: [departmentId], references: [id])
+  team       Team?         @relation("TeamMembers", fields: [teamId], references: [id])
+  ledTeams   Team[]        @relation("TeamLead")
+  manager    User?         @relation("UserManager", fields: [managerId], references: [id])
+  reports    User[]        @relation("UserManager")
+  schedule   WorkSchedule? @relation(fields: [scheduleId], references: [id])
+  managedDepartments Department[] @relation("DepartmentManager")
+
+  profile        Profile?
+  sessions       Session[]
+  attendances    Attendance[]
+  timesheetLines TimesheetLine[] @relation("LineOwner")
+  timer          TimerSession?
+  allocations    LeaveAllocation[]
+  leaveRequests  LeaveRequest[]  @relation("LeaveOwner")
+  leaveStep1     LeaveRequest[]  @relation("LeaveStep1")
+  leaveFinal     LeaveRequest[]  @relation("LeaveFinal")
+  notifications  Notification[]
+  calendars      CalendarConnection[]
+  memberships    ConversationMember[]
+  assistedLines  TimesheetLine[]  @relation("LineAssisted")
+  contracts      Contract[]
+  payslips       Payslip[]
+  appraisals     Appraisal[]      @relation("AppraisalEmployee")
+  goals          AppraisalGoal[]
+  managedProjects Project[]       @relation("ProjectManager")
+  taskAssignments TaskAssignee[]
+  accessRole      AccessRole?     @relation(fields: [accessRoleId], references: [id])
+
+  @@unique([companyId, email])
+  @@unique([companyId, employeeNo])
+  @@index([departmentId])
+  @@index([managerId])
+}
+
+// Personal data kept apart from the login record. *Enc columns are AES-256-GCM (lib/crypto.js).
+model Profile {
+  userId          Int      @id
+  companyId       Int
+  legalName       String?
+  preferredName   String?
+  birthDate       DateTime? @db.Date
+  idNumberEnc     String?  @db.Text
+  taxNumberEnc    String?  @db.Text
+  phone           String?
+  personalEmail   String?
+  address         String?  @db.VarChar(500)
+  emergencyName     String?
+  emergencyRelation String?
+  emergencyPhone    String?
+  emergencyEmail    String?
+  salutation      String?
+  firstName       String?
+  lastName        String?
+  pronoun         String?
+  gender          String?
+  nationality     String?
+  bloodGroup      String?
+  religion        String?
+  race            String?
+  maritalStatus   String?
+  idExpiry        DateTime? @db.Date
+  passportNumberEnc String? @db.Text
+  permitExpiry    DateTime? @db.Date
+  city            String?
+  state           String?
+  zipCode         String?
+  country         String?
+  contactNumber   String?
+  presentAddress  String?  @db.VarChar(500)
+  presentCity     String?
+  presentState    String?
+  presentZip      String?
+  presentCountry  String?
+  presentContact  String?
+  homePhone       String?
+  officePhone     String?
+  dependents      Json?
+  workExperience  Json?
+  qualifications  Json?
+  memberships     Json?
+  signatureFileId Int?
+  bankName        String?
+  bankAccountEnc  String?  @db.Text
+  bankAccountType String?
+  photoFileId     Int?
+  updatedAt       DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+// One row per instant field saved, or per field in a change request (PRF-05).
+model ProfileChange {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  userId     Int
+  actorId    Int
+  field      String
+  oldValue   String?  @db.Text
+  newValue   String?  @db.Text
+  seenById   Int?
+  seenAt     DateTime?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+  @@index([seenAt])
+}
+
+model ChangeRequest {
+  id          Int           @id @default(autoincrement())
+  companyId   Int
+  userId      Int
+  // [{ field, label, oldMasked, newMasked }], display-safe
+  summary     Json
+  // AES-encrypted JSON of the real new values; cleared once decided
+  payloadEnc  String?       @db.Text
+  proofFileId Int?
+  status      RequestStatus @default(PENDING)
+  decidedById Int?
+  decidedAt   DateTime?
+  reason      String?       @db.VarChar(500)
+  createdAt   DateTime      @default(now())
+
+  @@index([status])
+  @@index([userId])
+}
+
+// Role, manager and position history (USR-03)
+model UserHistory {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  userId    Int
+  actorId   Int
+  field     String
+  oldValue  String?
+  newValue  String?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+model Session {
+  id         String    @id
+  companyId  Int
+  userId     Int
+  userAgent  String?   @db.VarChar(255)
+  ip         String?
+  remember   Boolean   @default(false)
+  // Set while a Super Admin is viewing as this user
+  impersonatorId Int?
+  expiresAt  DateTime?
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}
+
+model Attendance {
+  id            Int              @id @default(autoincrement())
+  companyId     Int
+  userId        Int
+  // Calendar day of the check-in in the user's timezone
+  date          DateTime         @db.Date
+  checkIn       DateTime
+  checkOut      DateTime?
+  // Equal to userId while open. The unique index makes "one open record per user" impossible to break (ATT-04).
+  openUserId    Int?             @unique
+  workedHours   Float?
+  extraHours    Float?
+  lateMinutes   Int              @default(0)
+  earlyMinutes  Int              @default(0)
+  source        AttendanceSource @default(BUTTON)
+  isEdited      Boolean          @default(false)
+  autoClosed    Boolean          @default(false)
+  reviewedAt    DateTime?
+  idempotencyKey String?         @unique
+  checkOutKey   String?          @unique
+  deletedAt     DateTime?
+  createdAt     DateTime         @default(now())
+
+  user  User             @relation(fields: [userId], references: [id])
+  edits AttendanceEdit[]
+
+  @@index([userId, date])
+  @@index([date])
+}
+
+model AttendanceEdit {
+  id           Int      @id @default(autoincrement())
+  companyId    Int
+  attendanceId Int
+  editorId     Int
+  field        String
+  oldValue     String?
+  newValue     String?
+  reason       String   @db.VarChar(500)
+  editedAt     DateTime @default(now())
+
+  attendance Attendance @relation(fields: [attendanceId], references: [id])
+
+  @@index([attendanceId])
+}
+
+// Employee asks HR to add a day they missed; only HR can then create the record (ATT-08).
+model MissedDayRequest {
+  id          Int           @id @default(autoincrement())
+  companyId   Int
+  userId      Int
+  date        DateTime      @db.Date
+  note        String        @db.VarChar(500)
+  status      RequestStatus @default(PENDING)
+  decidedById Int?
+  decidedAt   DateTime?
+  createdAt   DateTime      @default(now())
+
+  @@unique([userId, date])
+  @@index([status])
+}
+
+// Columns of the projects kanban, e.g. "Implementation Projects".
+model ProjectStage {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  name      String
+  sequence  Int     @default(0)
+  folded    Boolean @default(false)
+
+  projects Project[]
+}
+
+model Project {
+  id             Int       @id @default(autoincrement())
+  companyId      Int
+  name           String
+  departmentId   Int?
+  stageId        Int?
+  managerId      Int?
+  taskLabel      String    @default("Tasks")
+  description    String?   @db.Text
+  plannedStart   DateTime? @db.Date
+  plannedEnd     DateTime? @db.Date
+  allocatedHours Float     @default(0)
+  tags           Json?
+  // on_track, at_risk, off_track, on_hold or done
+  health         String    @default("on_track")
+  customer       String?
+  billable       Boolean   @default(false)
+  // Where it came from when imported, e.g. "clickup:12345"
+  externalId     String?
+  createdById    Int?
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+
+  department Department?   @relation(fields: [departmentId], references: [id])
+  stage      ProjectStage? @relation(fields: [stageId], references: [id])
+  manager    User?         @relation("ProjectManager", fields: [managerId], references: [id])
+  tasks      Task[]
+  taskStages TaskStage[]
+  lines      TimesheetLine[]
+  timers     TimerSession[]
+  risks      RiskItem[]
+  favorites  ProjectFavorite[]
+
+  @@unique([companyId, externalId])
+  @@index([stageId])
+}
+
+model ProjectFavorite {
+  userId    Int
+  projectId Int
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@id([userId, projectId])
+}
+
+// Columns of a project's task board.
+model TaskStage {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  projectId Int
+  name      String
+  sequence  Int     @default(0)
+  // Tasks here count as done on the Tasks smart button.
+  isDone    Boolean @default(false)
+
+  project Project @relation(fields: [projectId], references: [id])
+  tasks   Task[]
+
+  @@index([projectId])
+}
+
+model Task {
+  id           Int       @id @default(autoincrement())
+  companyId    Int
+  projectId    Int
+  stageId      Int?
+  parentId     Int?
+  name         String    @db.VarChar(500)
+  description  String?   @db.Text
+  priority     Boolean   @default(false)
+  deadline     DateTime? @db.Date
+  plannedHours Float     @default(0)
+  tags         Json?
+  sequence     Int       @default(0)
+  externalId   String?
+  createdById  Int?
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+
+  project   Project         @relation(fields: [projectId], references: [id])
+  stage     TaskStage?      @relation(fields: [stageId], references: [id])
+  parent    Task?           @relation("Subtasks", fields: [parentId], references: [id])
+  subtasks  Task[]          @relation("Subtasks")
+  assignees TaskAssignee[]
+  lines     TimesheetLine[]
+  timers    TimerSession[]
+
+  @@unique([companyId, externalId])
+  @@index([projectId])
+}
+
+model TaskAssignee {
+  taskId Int
+  userId Int
+
+  task Task @relation(fields: [taskId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@id([taskId, userId])
+}
+
+// Risk / Issue & Change Register
+model RiskItem {
+  id          Int       @id @default(autoincrement())
+  companyId   Int
+  projectId   Int
+  // RISK, ISSUE or CHANGE
+  kind        String
+  title       String
+  description String?   @db.Text
+  // LOW, MEDIUM, HIGH
+  severity    String    @default("MEDIUM")
+  // OPEN, MITIGATING, CLOSED
+  status      String    @default("OPEN")
+  ownerId     Int?
+  dueDate     DateTime? @db.Date
+  createdById Int
+  createdAt   DateTime  @default(now())
+
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@index([projectId])
+}
+
+// Chatter on projects, tasks and any other record: messages, log notes and system tracking.
+model ChatterEntry {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  entity    String
+  entityId  Int
+  authorId  Int?
+  // MESSAGE, NOTE or TRACKING
+  kind      String   @default("MESSAGE")
+  body      String   @db.Text
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
+model Activity {
+  id          Int       @id @default(autoincrement())
+  companyId   Int
+  entity      String
+  entityId    Int
+  assigneeId  Int
+  summary     String
+  dueDate     DateTime  @db.Date
+  doneAt      DateTime?
+  createdById Int
+  createdAt   DateTime  @default(now())
+
+  @@index([entity, entityId])
+  @@index([assigneeId, doneAt])
+}
+
+model Follower {
+  entity   String
+  entityId Int
+  userId   Int
+
+  @@id([entity, entityId, userId])
+}
+
+model TimesheetLine {
+  id            Int            @id @default(autoincrement())
+  companyId     Int
+  userId        Int
+  date          DateTime       @db.Date
+  projectId     Int
+  taskId        Int?
+  assistedUserId Int?
+  description   String?        @db.VarChar(500)
+  hours         Float          @default(0)
+  state         TimesheetState @default(DRAFT)
+  // Which workflow step the week is waiting on
+  stepIndex     Int            @default(0)
+  step1ById     Int?
+  validatedById Int?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  user     User    @relation("LineOwner", fields: [userId], references: [id])
+  assisted User?   @relation("LineAssisted", fields: [assistedUserId], references: [id])
+  project  Project @relation(fields: [projectId], references: [id])
+  task     Task?   @relation(fields: [taskId], references: [id])
+
+  @@index([userId, date])
+  @@index([date])
+  @@index([projectId])
+}
+
+model TimerSession {
+  id             Int      @id @default(autoincrement())
+  companyId      Int
+  userId         Int      @unique
+  projectId      Int
+  taskId         Int?
+  assistedUserId Int?
+  description    String?  @db.VarChar(500)
+  startedAt      DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  task    Task?   @relation(fields: [taskId], references: [id])
+}
+
+model LeaveType {
+  id                 Int           @id @default(autoincrement())
+  companyId          Int
+  name               String
+  colour             String        @default("#E2744A")
+  requiresAllocation Boolean       @default(true)
+  approvalSteps      ApprovalSteps @default(MANAGER_HR)
+  // When set, this workflow replaces approvalSteps
+  workflowId         Int?
+  attachmentAfterDays Int?
+  halfDayAllowed     Boolean       @default(true)
+  accrualPerMonth    Float?
+  // Days granted when someone joins or a new cycle starts; types that accrue leave it empty
+  defaultDays        Float?
+  maxCarryOver       Float?
+  // "MM-DD" the carried-over days must be used by
+  carryExpiry        String?
+  active             Boolean       @default(true)
+
+  allocations LeaveAllocation[]
+  requests    LeaveRequest[]
+}
+
+model LeaveAllocation {
+  id          Int            @id @default(autoincrement())
+  companyId   Int
+  userId      Int
+  leaveTypeId Int
+  days        Float
+  kind        AllocationKind @default(GRANT)
+  note        String?
+  periodStart DateTime       @db.Date
+  periodEnd   DateTime       @db.Date
+  createdById Int?
+  createdAt   DateTime       @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  leaveType LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  @@index([userId, leaveTypeId])
+}
+
+model LeaveRequest {
+  id           Int        @id @default(autoincrement())
+  companyId    Int
+  userId       Int
+  leaveTypeId  Int
+  dateFrom     DateTime   @db.Date
+  dateTo       DateTime   @db.Date
+  halfDay      Boolean    @default(false)
+  days         Float
+  reason       String?    @db.VarChar(500)
+  attachmentId Int?
+  state        LeaveState @default(SUBMITTED)
+  stepIndex    Int        @default(0)
+  step1ById    Int?
+  step1At      DateTime?
+  finalById    Int?
+  finalAt      DateTime?
+  refusedById  Int?
+  refuseReason String?    @db.VarChar(500)
+  // [{ connectionId, eventId }] for "Out of office" events pushed to outside calendars
+  pushedEvents Json?
+  createdAt    DateTime   @default(now())
+
+  user       User       @relation("LeaveOwner", fields: [userId], references: [id])
+  leaveType  LeaveType  @relation(fields: [leaveTypeId], references: [id])
+  step1By    User?      @relation("LeaveStep1", fields: [step1ById], references: [id])
+  finalBy    User?      @relation("LeaveFinal", fields: [finalById], references: [id])
+
+  @@index([userId, state])
+  @@index([dateFrom, dateTo])
+}
+
+model Notification {
+  id        Int       @id @default(autoincrement())
+  companyId Int
+  userId    Int
+  type      String
+  title     String
+  body      String?   @db.VarChar(1000)
+  link      String?
+  payload   Json?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, readAt])
+}
+
+model AuditLog {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  actorId   Int?
+  actorName String?
+  entity    String
+  entityId  String?
+  action    String
+  before    Json?
+  after     Json?
+  ip        String?
+  at        DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([at])
+  @@index([actorId])
+}
+
+model Wish {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  fromId      Int
+  toId        Int
+  year        Int
+  message     String?  @db.VarChar(500)
+  createdAt   DateTime @default(now())
+
+  @@unique([fromId, toId, year])
+  @@index([toId, year])
+}
+
+model FileObject {
+  id         Int      @id @default(autoincrement())
+  companyId  Int
+  ownerId    Int
+  name       String
+  mime       String
+  size       Int
+  storageKey String   @unique
+  purpose    String
+  createdAt  DateTime @default(now())
+}
+
+model Conversation {
+  id           Int              @id @default(autoincrement())
+  companyId    Int
+  type         ConversationType
+  channelKind  ChannelKind?
+  name         String?
+  departmentId Int?             @unique
+  // Sorted "a:b" user ids so two people share one direct thread
+  directKey    String?          @unique
+  createdById  Int?
+  lastMessageAt DateTime?
+  createdAt    DateTime         @default(now())
+
+  members  ConversationMember[]
+  messages Message[]
+}
+
+model ConversationMember {
+  id             Int       @id @default(autoincrement())
+  companyId      Int
+  conversationId Int
+  userId         Int
+  lastReadAt     DateTime?
+  joinedAt       DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  user         User         @relation(fields: [userId], references: [id])
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             Int       @id @default(autoincrement())
+  companyId      Int
+  conversationId Int
+  // Null = NkashHeaven bot
+  senderId       Int?
+  clientId       String?   @unique
+  body           String?   @db.Text
+  attachmentId   Int?
+  link           String?
+  pinnedAt       DateTime?
+  pinnedById     Int?
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId, createdAt])
+}
+
+model CalendarConnection {
+  id           Int              @id @default(autoincrement())
+  companyId    Int
+  userId       Int
+  provider     CalendarProvider
+  accountEmail String?
+  refreshEnc   String           @db.Text
+  status       CalendarStatus   @default(CONNECTED)
+  // Set when the user allowed write access so approved leave can be pushed as "Out of office"
+  pushLeave    Boolean          @default(false)
+  syncToken    String?          @db.Text
+  channelId    String?          @unique
+  channelResource String?
+  channelExpiry DateTime?
+  lastSyncAt   DateTime?
+  lastError    String?          @db.VarChar(500)
+  createdAt    DateTime         @default(now())
+
+  user   User          @relation(fields: [userId], references: [id])
+  events SyncedEvent[]
+
+  @@unique([userId, provider])
+}
+
+model SyncedEvent {
+  id            Int      @id @default(autoincrement())
+  companyId     Int
+  connectionId  Int
+  userId        Int
+  externalId    String
+  title         String
+  startAt       DateTime
+  endAt         DateTime
+  allDay        Boolean  @default(false)
+  location      String?  @db.VarChar(500)
+  meetingUrl    String?  @db.VarChar(1000)
+  attendeeCount Int      @default(0)
+  isPrivate     Boolean  @default(false)
+
+  connection CalendarConnection @relation(fields: [connectionId], references: [id])
+
+  @@unique([connectionId, externalId])
+  @@index([userId, startAt])
+}
+
+// Meetings and events created inside NkashHeaven-HR
+model CompanyEvent {
+  id           Int      @id @default(autoincrement())
+  companyId    Int
+  title        String
+  description  String?  @db.VarChar(1000)
+  startAt      DateTime
+  endAt        DateTime
+  location     String?
+  meetingUrl   String?  @db.VarChar(1000)
+  // COMPANY, DEPARTMENT or PEOPLE
+  audience     String   @default("PEOPLE")
+  departmentId Int?
+  attendeeIds  Json?
+  createdById  Int
+  createdAt    DateTime @default(now())
+
+  @@index([startAt])
+}
+
+// A role a company defines for itself. permissions lists what it can open and do; scope is how much data it sees.
+model AccessRole {
+  id          Int     @id @default(autoincrement())
+  companyId   Int
+  name        String
+  description String? @db.VarChar(300)
+  // SELF, TEAM, DEPARTMENT or COMPANY
+  scope       String  @default("SELF")
+  permissions Json
+  // The company's owner role: it can't be deleted or lose role management.
+  isSystem    Boolean @default(false)
+
+  users User[]
+
+  @@unique([companyId, name])
+}
+
+// Approval chain a company builds, used by leave types and timesheets.
+model Workflow {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  name      String
+  // LEAVE or TIMESHEET
+  appliesTo String
+  // [{ kind: MANAGER | HR | ROLE | USER, roleId?, userId?, label }]
+  steps     Json
+  active    Boolean @default(true)
+
+  @@unique([companyId, name])
+}
+
+model EmployeeDocument {
+  id        Int       @id @default(autoincrement())
+  companyId Int
+  userId    Int
+  name      String
+  category  String?
+  fileId    Int
+  expiresOn DateTime? @db.Date
+  createdById Int?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+model EmailTemplate {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  key       String
+  subject   String
+  body      String   @db.Text
+  // Heading, button text, colours and images for this email
+  design    Json?
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, key])
+}
+
+// Durable email queue with retries (ONB-06). The body is encrypted: it can hold a temporary password.
+model EmailJob {
+  id          Int         @id @default(autoincrement())
+  companyId   Int
+  toEmail     String
+  toName      String?
+  subject     String
+  htmlEnc     String      @db.LongText
+  kind        String
+  userId      Int?
+  status      EmailStatus @default(PENDING)
+  attempts    Int         @default(0)
+  nextAttempt DateTime    @default(now())
+  providerId  String?     @unique
+  lastError   String?     @db.VarChar(500)
+  sentAt      DateTime?
+  createdAt   DateTime    @default(now())
+
+  @@index([status, nextAttempt])
+}
+
+// Brevo, Google and Microsoft live on the platform company; ClickUp belongs to each company.
+model Integration {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  provider  String
+  // AES-encrypted JSON of credentials
+  configEnc String?  @db.Text
+  enabled   Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, provider])
+}
+
+// Monitoring (SYS)
+model MetricBucket {
+  id        Int      @id @default(autoincrement())
+  bucketAt  DateTime @unique
+  requests  Int      @default(0)
+  errors    Int      @default(0)
+  p95Ms     Int      @default(0)
+  checkInP95Ms Int   @default(0)
+}
+
+model ErrorLog {
+  id        Int      @id @default(autoincrement())
+  at        DateTime @default(now())
+  endpoint  String
+  message   String   @db.VarChar(1000)
+  status    Int
+  count     Int      @default(1)
+  lastAt    DateTime @default(now())
+
+  @@index([lastAt])
+}
+
+model SecurityEvent {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  type      String
+  userId    Int?
+  email     String?
+  ip        String?
+  detail    String?  @db.VarChar(500)
+  at        DateTime @default(now())
+
+  @@index([type, at])
+}
+
+model JobRun {
+  id        Int       @id @default(autoincrement())
+  scopeId   Int?
+  name      String
+  startedAt DateTime  @default(now())
+  endedAt   DateTime?
+  ok        Boolean?
+  detail    String?   @db.VarChar(500)
+
+  @@index([name, startedAt])
+}
+
+model Alert {
+  id          Int         @id @default(autoincrement())
+  key         String
+  service     String
+  message     String      @db.VarChar(500)
+  status      AlertStatus @default(OPEN)
+  createdAt   DateTime    @default(now())
+  ackById     Int?
+  ackAt       DateTime?
+  resolvedAt  DateTime?
+
+  @@index([status])
+  @@index([key, status])
+}
+
+model BackupRun {
+  id        Int      @id @default(autoincrement())
+  startedAt DateTime @default(now())
+  endedAt   DateTime?
+  ok        Boolean?
+  sizeBytes BigInt?
+  fileName  String?
+  detail    String?  @db.VarChar(500)
+  triggeredBy Int?
+}
+
+model DataRequest {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  userId      Int
+  kind        String
+  reason      String?  @db.VarChar(500)
+  requestedById Int
+  status      String   @default("PENDING")
+  fileId      Int?
+  createdAt   DateTime @default(now())
+  completedAt DateTime?
+}
+
+// Employee contract (Odoo hr.contract). Only one RUNNING contract per employee.
+model Contract {
+  id              Int       @id @default(autoincrement())
+  companyId       Int
+  userId          Int
+  reference       String
+  // PERMANENT, FIXED_TERM, PART_TIME or INTERN
+  contractType    String    @default("PERMANENT")
+  jobTitle        String?
+  startDate       DateTime  @db.Date
+  endDate         DateTime? @db.Date
+  probationEnd    DateTime? @db.Date
+  workPermitNumber String?
+  workPermitExpiry DateTime? @db.Date
+  wage            Float
+  // DRAFT, RUNNING, EXPIRED or CANCELLED
+  state           String    @default("DRAFT")
+  notes           String?   @db.Text
+  documentFileId  Int?
+  createdById     Int?
+  createdAt       DateTime  @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  payslips Payslip[]
+
+  @@index([userId, state])
+}
+
+// Editable salary rules. BASIC, PAYE, UIF and NET are computed in lib/payroll.js.
+model SalaryRule {
+  id         Int     @id @default(autoincrement())
+  companyId  Int
+  code       String
+  name       String
+  // ALLOWANCE, DEDUCTION or EMPLOYER
+  category   String
+  // FIXED or PERCENT_BASIC
+  amountType String  @default("FIXED")
+  amount     Float   @default(0)
+  sequence   Int     @default(10)
+  active     Boolean @default(true)
+
+  @@unique([companyId, code])
+}
+
+// A payslip batch for a period (Odoo hr.payslip.run).
+model PayrollRun {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  name        String
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  // DRAFT, VERIFIED, DONE or PAID
+  state       String   @default("DRAFT")
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  payslips Payslip[]
+
+  @@unique([companyId, periodStart, periodEnd])
+}
+
+model Payslip {
+  id          Int      @id @default(autoincrement())
+  companyId   Int
+  runId       Int
+  userId      Int
+  contractId  Int
+  number      String
+  periodStart DateTime @db.Date
+  periodEnd   DateTime @db.Date
+  workedDays  Float    @default(0)
+  unpaidDays  Float    @default(0)
+  gross       Float    @default(0)
+  deductions  Float    @default(0)
+  net         Float    @default(0)
+  // DRAFT, VERIFIED, DONE or PAID
+  state       String   @default("DRAFT")
+  createdAt   DateTime @default(now())
+
+  run      PayrollRun    @relation(fields: [runId], references: [id])
+  user     User          @relation(fields: [userId], references: [id])
+  contract Contract      @relation(fields: [contractId], references: [id])
+  lines    PayslipLine[]
+
+  @@unique([companyId, number])
+  @@unique([runId, userId])
+}
+
+model PayslipLine {
+  id        Int     @id @default(autoincrement())
+  payslipId Int
+  code      String
+  name      String
+  // BASIC, ALLOWANCE, DEDUCTION, EMPLOYER or NET
+  category  String
+  amount    Float
+  sequence  Int     @default(10)
+  // Added by hand on this payslip: kept when it recomputes.
+  manual    Boolean @default(false)
+
+  payslip Payslip @relation(fields: [payslipId], references: [id])
+
+  @@index([payslipId])
+}
+
+model Appraisal {
+  id              Int       @id @default(autoincrement())
+  companyId       Int
+  userId          Int
+  managerId       Int
+  deadline        DateTime  @db.Date
+  // NEW, PENDING, DONE or CANCELLED
+  state           String    @default("NEW")
+  employeeFeedback String?  @db.Text
+  managerFeedback String?   @db.Text
+  employeeDone    Boolean   @default(false)
+  managerDone     Boolean   @default(false)
+  // 1 to 5, set by the manager when finished
+  rating          Int?
+  createdById     Int?
+  createdAt       DateTime  @default(now())
+
+  user User @relation("AppraisalEmployee", fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([managerId])
+}
+
+model AppraisalGoal {
+  id          Int       @id @default(autoincrement())
+  companyId   Int
+  userId      Int
+  title       String
+  description String?   @db.Text
+  progress    Int       @default(0)
+  deadline    DateTime? @db.Date
+  createdById Int?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+}

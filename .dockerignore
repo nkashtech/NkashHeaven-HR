@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+backend/.env
+backend/mysql-data
+backend/uploads
+backend/backups
+.git

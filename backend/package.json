@@ -1,0 +1,62 @@
+{
+  "name": "nkashheaven-hr-backend",
+  "version": "1.0.0",
+  "description": "NkashHeaven-HR workforce tracking API",
+  "main": "api/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "nodemon api/server.js",
+    "start": "node api/server.js",
+    "db:local": "sh scripts/mysql-local.sh",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "node prisma/seed.js",
+    "db:seed:prod": "node scripts/bootstrap.js",
+    "db:reset": "prisma migrate reset --force",
+    "db:studio": "prisma studio",
+    "test": "jest --runInBand",
+    "test:brevo": "node scripts/test-brevo.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1160.0",
+    "@prisma/client": "5.22.0",
+    "bcryptjs": "2.4.3",
+    "cors": "2.8.5",
+    "date-fns": "3.6.0",
+    "date-fns-tz": "3.2.0",
+    "dotenv": "16.4.7",
+    "exceljs": "4.4.0",
+    "express": "4.21.2",
+    "express-rate-limit": "7.4.1",
+    "helmet": "7.2.0",
+    "jsonwebtoken": "9.0.2",
+    "morgan": "1.10.0",
+    "multer": "2.0.2",
+    "otplib": "12.0.1",
+    "pdfkit": "0.15.2",
+    "prisma": "5.22.0",
+    "qrcode": "1.5.4",
+    "socket.io": "4.8.1"
+  },
+  "devDependencies": {
+    "jest": "29.7.0",
+    "nodemon": "3.1.9",
+    "socket.io-client": "4.8.1",
+    "supertest": "7.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "prisma": {
+    "seed": "node prisma/seed.js"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "globalSetup": "./tests/setup.js",
+    "setupFiles": [
+      "./tests/env.js"
+    ]
+  }
+}

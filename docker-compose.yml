@@ -1,0 +1,13 @@
+# Optional local MySQL if you don't want to use a Homebrew server.
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: nkash_local
+      MYSQL_DATABASE: nkash_hr
+    ports:
+      - "3307:3306"
+    volumes:
+      - nkash_mysql:/var/lib/mysql
+volumes:
+  nkash_mysql:

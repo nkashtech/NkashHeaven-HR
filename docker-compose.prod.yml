@@ -1,0 +1,32 @@
+# The app and its database on one server. Put an HTTPS proxy in front of port 3011.
+# Copy .env.production.example to .env.production first.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    ports:
+      - "3011:3011"
+    volumes:
+      - nkash_uploads:/app/backend/uploads
+      - nkash_backups:/app/backend/backups
+    depends_on:
+      mysql:
+        condition: service_healthy
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: nkash_hr
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - nkash_mysql:/var/lib/mysql
+volumes:
+  nkash_mysql:
+  nkash_uploads:
+  nkash_backups:

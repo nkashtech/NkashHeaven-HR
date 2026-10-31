@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --shell: 236 237 240; --panel: 255 255 255; --card: 255 255 255; --subtle: 246 246 247; --line: 233 234 237;
+  --ink: 24 24 27; --ink-soft: 82 84 91; --ink-muted: 124 126 134;
+  --brand: 179 77 34; --brand-bright: 226 116 74; --brand-soft: 252 240 233; --brand-ink: 143 60 25;
+  --ok: 30 122 80; --ok-soft: 229 244 236; --warn: 146 96 12; --warn-soft: 252 243 214;
+  --bad: 176 42 48; --bad-soft: 252 232 232; --info: 47 98 227; --info-soft: 230 238 253;
+  --teal: 61 154 139; --violet: 124 58 237; --on-brand: 255 255 255;
+}
+
+html.dark {
+  --shell: 16 16 19; --panel: 24 24 28; --card: 30 30 35; --subtle: 38 38 44; --line: 52 52 60;
+  --ink: 244 244 245; --ink-soft: 190 191 197; --ink-muted: 140 142 150;
+  --brand: 226 116 74; --brand-bright: 232 133 93; --brand-soft: 62 38 28; --brand-ink: 244 170 138;
+  --ok: 86 201 144; --ok-soft: 28 54 43; --warn: 232 186 92; --warn-soft: 58 47 22;
+  --bad: 244 125 130; --bad-soft: 66 30 33; --info: 130 165 250; --info-soft: 31 42 74;
+  --teal: 94 196 178; --violet: 167 130 248; --on-brand: 24 24 27;
+}
+
+html, body, #root { height: 100%; }
+body { background: rgb(var(--shell)); color: rgb(var(--ink)); font-family: Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; font-size: 14px; }
+
+@layer components {
+  .card { @apply bg-card border border-line rounded-xl2 p-5; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-3.5 py-2 text-[13px] font-semibold transition disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/50; }
+  .btn-primary { @apply btn bg-brand hover:brightness-95 shadow-soft; color: rgb(var(--on-brand)); }
+  .btn-outline { @apply btn bg-card text-ink border border-line hover:bg-subtle; }
+  .btn-danger { @apply btn bg-card text-bad border border-bad/40 hover:bg-bad-soft; }
+  .btn-ghost { @apply btn text-ink-soft hover:bg-subtle; }
+  .btn-sm { @apply px-2.5 py-1.5 text-xs rounded-lg; }
+  .input { @apply w-full rounded-xl border border-line bg-card px-3 py-2 text-[13px] text-ink placeholder:text-ink-muted focus:outline-none focus:ring-2 focus:ring-brand/30 focus:border-brand/60 disabled:bg-subtle disabled:text-ink-muted; }
+  .label { @apply block text-xs font-semibold text-ink mb-1; }
+  .link { @apply text-brand-ink font-semibold text-[13px] hover:underline; }
+  .th { @apply text-left text-[11px] font-semibold tracking-wide uppercase text-ink-muted px-4 py-2.5 whitespace-nowrap; }
+  .td { @apply px-4 py-3 text-[13px] text-ink align-middle; }
+  .eyebrow { @apply text-[11px] font-semibold tracking-wider uppercase text-ink-muted; }
+}
+
+/* Grid and flex children may shrink below their content, so wide tables scroll inside their card instead of pushing the page sideways. */
+.grid > * { min-width: 0; }
+
+@media print {
+  .no-print { display: none !important; }
+  body, main, #root { background: #fff !important; height: auto !important; overflow: visible !important; }
+  body * { visibility: hidden; }
+  [data-employee-card], [data-employee-card] * { visibility: visible; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  [data-employee-card] { position: fixed; left: 10mm; top: 10mm; }
+}
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgb(var(--line)); border-radius: 8px; }

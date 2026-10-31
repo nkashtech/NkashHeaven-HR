@@ -97,12 +97,19 @@ async function ensureCompanyChannels() {
   }
 }
 
+const channelName = (department) => department.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
 async function ensureDepartmentChannel(department) {
   const existing = await prisma.conversation.findUnique({ where: { departmentId: department.id } });
   if (existing) return existing;
   return prisma.conversation.create({
-    data: { type: 'CHANNEL', channelKind: 'DEPARTMENT', departmentId: department.id, name: department.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') },
+    data: { type: 'CHANNEL', channelKind: 'DEPARTMENT', departmentId: department.id, name: channelName(department)},
   });
+}
+
+// A renamed department keeps its channel and history under the new name.
+async function renameDepartmentChannel(department) {
+  await prisma.conversation.updateMany({ where: { departmentId: department.id }, data: { name: channelName(department) } });
 }
 
 // CHT-02, CHT-10: channel membership always follows the org structure.
@@ -135,5 +142,5 @@ async function presenceFor(users) {
 
 module.exports = {
   hydrate, memberIds, postMessage, ensureMembership, botConversation, botMessage, directConversation,
-  ensureCompanyChannels, ensureDepartmentChannel, syncUserChannels, presenceFor,
+  ensureCompanyChannels, ensureDepartmentChannel, renameDepartmentChannel, syncUserChannels, presenceFor,
 };

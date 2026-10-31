@@ -1808,3 +1808,28 @@ describe('name fields', () => {
     expect((await auth(request(app).get('/api/profile/me'))).body.profile.birthDate).toBe('1991-02-03');
   });
 });
+
+describe('editing departments and teams', () => {
+  it('renames a department and its chat channel, and refuses a blank or taken name', async () => {
+    const dept = (await as('hr').post('/settings/departments', { name: 'Old Dept' })).body.department;
+    const other = (await as('hr').post('/settings/departments', { name: 'Taken Dept' })).body.department;
+    expect((await as('hr').patch(`/settings/departments/${dept.id}`, { name: 'New Dept', managerId: ids.lead })).status).toBe(200);
+    const list = (await as('hr').get('/settings/departments')).body.departments.find((d) => d.id === dept.id);
+    expect(list.name).toBe('New Dept');
+    expect(list.manager.id).toBe(ids.lead);
+    const channel = await asPlatform(async () => await prisma.conversation.findFirst({ where: { departmentId: dept.id } }));
+    expect(channel.name).toBe('new-dept');
+    expect((await as('hr').patch(`/settings/departments/${dept.id}`, { name: '   ' })).status).toBe(400);
+    expect((await as('hr').patch(`/settings/departments/${dept.id}`, { name: other.name })).status).toBe(409);
+    expect((await as('emp').patch(`/settings/departments/${dept.id}`, { name: 'Nope' })).status).toBe(403);
+  });
+
+  it('edits a team, including moving it and clearing its lead', async () => {
+    const dept = (await as('hr').post('/settings/departments', { name: 'Team Home' })).body.department;
+    const team = (await as('hr').post('/settings/teams', { name: 'Typo Teem', leadId: ids.lead })).body.team;
+    expect((await as('hr').patch(`/settings/teams/${team.id}`, { name: 'Good Team', departmentId: dept.id, leadId: '' })).status).toBe(200);
+    const row = (await as('hr').get('/settings/teams')).body.teams.find((t) => t.id === team.id);
+    expect([row.name, row.department.id, row.lead]).toEqual(['Good Team', dept.id, null]);
+    expect((await as('hr').patch(`/settings/teams/${team.id}`, { name: '' })).status).toBe(400);
+  });
+});

@@ -5,7 +5,7 @@ const { HttpError, h, required, intParam, dateParam } = require('../middleware/v
 const { getSettings, updateSettings, effectiveLockDate } = require('../../lib/settings');
 const { audit } = require('../../lib/audit');
 const { TEMPLATES, getTemplate, welcomeHtml, resetHtml, payslipHtml, notificationHtml } = require('../../lib/email');
-const { ensureDepartmentChannel } = require('../../lib/chat');
+const { ensureDepartmentChannel, renameDepartmentChannel } = require('../../lib/chat');
 const { toDbDate, fromDbDate } = require('../../lib/time');
 const { formatInTimeZone } = require('date-fns-tz');
 
@@ -182,10 +182,17 @@ router.post('/teams', requirePerm('org.configure'), h(async (req, res) => {
   res.status(201).json({ team });
 }));
 
+const newName = (name) => {
+  if (name === undefined) return undefined;
+  const trimmed = String(name).trim();
+  if (!trimmed) throw new HttpError(400, 'Enter a name');
+  return trimmed;
+};
+
 router.patch('/teams/:id', requirePerm('org.configure'), h(async (req, res) => {
   const id = intParam(req.params.id);
   const nullable = (v) => (v === undefined ? undefined : v ? Number(v) : null);
-  const team = await prisma.team.update({ where: { id }, data: { name: req.body.name, departmentId: nullable(req.body.departmentId), leadId: nullable(req.body.leadId), active: req.body.active } });
+  const team = await prisma.team.update({ where: { id }, data: { name: newName(req.body.name), departmentId: nullable(req.body.departmentId), leadId: nullable(req.body.leadId), active: req.body.active } });
   await audit(req, { entity: 'Team', entityId: id, action: 'team.updated', after: team });
   res.json({ team });
 }));
@@ -208,8 +215,9 @@ router.patch('/departments/:id', requirePerm('org.configure'), h(async (req, res
   const id = intParam(req.params.id);
   const before = await prisma.department.findUnique({ where: { id } });
   const department = await prisma.department.update({
-    where: { id }, data: { name: req.body.name, managerId: req.body.managerId === undefined ? undefined : req.body.managerId ? Number(req.body.managerId) : null, active: req.body.active },
+    where: { id }, data: { name: newName(req.body.name), managerId: req.body.managerId === undefined ? undefined : req.body.managerId ? Number(req.body.managerId) : null, active: req.body.active },
   });
+  if (department.name !== before.name) await renameDepartmentChannel(department);
   await audit(req, { entity: 'Department', entityId: id, action: 'department.updated', before, after: department });
   res.json({ department });
 }));

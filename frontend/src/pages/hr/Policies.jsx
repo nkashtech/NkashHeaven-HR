@@ -225,21 +225,74 @@ function ScheduleModal({ schedule, onClose, onSaved }) {
   )
 }
 
+function EditDepartment({ department, managers, onClose, onSaved }) {
+  const [form, setForm] = useState({ name: department.name, managerId: department.manager?.id || '' })
+  const submit = async (e) => {
+    e.preventDefault()
+    try {
+      await api.patch(`/settings/departments/${department.id}`, { name: form.name, managerId: form.managerId || null })
+      toast.success('Department saved')
+      onSaved()
+    } catch (err) { fail(err) }
+  }
+  return (
+    <Modal title={`Edit ${department.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-3">
+        <Field label="Department name"><input required autoFocus className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
+        <Field label="Manager"><select className="input" value={form.managerId} onChange={(e) => setForm({ ...form, managerId: e.target.value })}><option value="">No manager</option>{managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn-primary">Save</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function EditTeam({ team, options, onClose, onSaved }) {
+  const [form, setForm] = useState({ name: team.name, departmentId: team.department?.id || '', leadId: team.lead?.id || '' })
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
+  const submit = async (e) => {
+    e.preventDefault()
+    try {
+      await api.patch(`/settings/teams/${team.id}`, form)
+      toast.success('Team saved')
+      onSaved()
+    } catch (err) { fail(err) }
+  }
+  return (
+    <Modal title={`Edit ${team.name}`} onClose={onClose}>
+      <form onSubmit={submit} className="space-y-3">
+        <Field label="Team name"><input required autoFocus className="input" value={form.name} onChange={set('name')} /></Field>
+        <Field label="Department"><select className="input" value={form.departmentId} onChange={set('departmentId')}><option value="">No department</option>{options.departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}</select></Field>
+        <Field label="Team lead"><select className="input" value={form.leadId} onChange={set('leadId')}><option value="">No lead</option>{options.managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></Field>
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-outline" onClick={onClose}>Cancel</button>
+          <button className="btn-primary">Save</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
 function Organisation() {
   const { data: schedules, reload: reloadSchedules } = useFetch('/settings/schedules')
   const { data: depts, reload: reloadDepts } = useFetch('/settings/departments')
-  const { data: options } = useFetch('/employees/options')
+  const { data: options, reload: reloadOptions } = useFetch('/employees/options')
   const { data: projects, reload: reloadProjects } = useFetch('/timesheets/projects/manage')
   const [editing, setEditing] = useState(null)
+  const [editingDept, setEditingDept] = useState(null)
+  const [deptVersion, setDeptVersion] = useState(0)
   const [newDept, setNewDept] = useState('')
   const [newProject, setNewProject] = useState('')
   const [newTask, setNewTask] = useState({})
+  const deptsChanged = () => { reloadDepts(); reloadOptions(); setDeptVersion((v) => v + 1) }
   const addDept = async (e) => {
     e.preventDefault()
     try {
       await api.post('/settings/departments', { name: newDept })
       setNewDept('')
-      reloadDepts()
+      deptsChanged()
     } catch (err) { fail(err) }
   }
   const addProject = async (e) => {
@@ -266,9 +319,12 @@ function Organisation() {
           {depts?.departments.map((d) => (
             <div key={d.id} className="flex items-center justify-between gap-2 py-2 text-[13px]">
               <span><b>{d.name}</b> <span className="text-ink-muted">· {d.people} people</span></span>
-              <select className="input !w-44 !py-1" aria-label={`${d.name} manager`} value={d.manager?.id || ''} onChange={(e) => api.patch(`/settings/departments/${d.id}`, { managerId: e.target.value || null }).then(reloadDepts).catch(fail)}>
-                <option value="">No manager</option>{options?.managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-              </select>
+              <div className="flex items-center gap-2">
+                <select className="input !w-44 !py-1" aria-label={`${d.name} manager`} value={d.manager?.id || ''} onChange={(e) => api.patch(`/settings/departments/${d.id}`, { managerId: e.target.value || null }).then(deptsChanged).catch(fail)}>
+                  <option value="">No manager</option>{options?.managers.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+                <button className="btn-outline btn-sm" aria-label={`Edit ${d.name}`} onClick={() => setEditingDept(d)}>Edit</button>
+              </div>
             </div>
           ))}
         </div>
@@ -283,7 +339,8 @@ function Organisation() {
           ))}
         </div>
       </Card>
-      <Teams />
+      <Teams key={deptVersion} />
+      {editingDept && options && <EditDepartment department={editingDept} managers={options.managers} onClose={() => setEditingDept(null)} onSaved={() => { setEditingDept(null); deptsChanged() }} />}
       <Card title="Projects and tasks" className="lg:col-span-2">
         <form onSubmit={addProject} className="mb-2 flex max-w-md gap-2"><input required className="input" placeholder="New project" aria-label="New project" value={newProject} onChange={(e) => setNewProject(e.target.value)} /><button className="btn-primary">Add</button></form>
         {!projects?.projects.length && <Empty>No projects yet.</Empty>}
@@ -602,6 +659,7 @@ function Teams() {
   const { data, reload } = useFetch('/settings/teams')
   const { data: options } = useFetch('/employees/options')
   const [form, setForm] = useState({ name: '', departmentId: '', leadId: '' })
+  const [editing, setEditing] = useState(null)
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
   const add = async (e) => {
     e.preventDefault()
@@ -621,8 +679,9 @@ function Teams() {
       </form>
       {!data?.teams.length && <Empty>No teams yet.</Empty>}
       <div className="grid gap-x-6 sm:grid-cols-2">
-        {data?.teams.map((t) => <div key={t.id} className="flex justify-between gap-2 border-b border-line py-1.5 text-[13px]"><span><b>{t.name}</b> <span className="text-ink-muted">· {t.department?.name || 'No department'}</span></span><span className="text-ink-soft">{t.lead?.name ? `${t.lead.name} · ` : ''}{t.people} people</span></div>)}
+        {data?.teams.map((t) => <div key={t.id} className="flex items-center justify-between gap-2 border-b border-line py-1.5 text-[13px]"><span><b>{t.name}</b> <span className="text-ink-muted">· {t.department?.name || 'No department'}</span></span><span className="flex items-center gap-2 text-ink-soft">{t.lead?.name ? `${t.lead.name} · ` : ''}{t.people} people<button className="btn-outline btn-sm" aria-label={`Edit ${t.name}`} onClick={() => setEditing(t)}>Edit</button></span></div>)}
       </div>
+      {editing && options && <EditTeam team={editing} options={options} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload() }} />}
     </Card>
   )
 }

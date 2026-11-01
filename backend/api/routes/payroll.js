@@ -182,7 +182,9 @@ router.get('/payslips/:id/pdf', h(async (req, res) => {
   doc.font('Helvetica-Bold').fontSize(16).fillColor(branding.primaryColor).text('Payslip', 50, top);
   doc.font('Helvetica').fontSize(10).fillColor('#1a1a1a').text(`${periodName(slip.periodStart)} · ${slip.number}`, 50, top + 22);
   top += 48;
-  const info = [['Employee', slip.user.name], ['Employee no.', slip.user.employeeNo], ['Job title', slip.contract.jobTitle || slip.user.jobTitle || ''], ['Department', slip.user.department?.name || ''], ['Period', `${fromDbDate(slip.periodStart)} to ${fromDbDate(slip.periodEnd)}`], ['Worked days', String(slip.workedDays)]];
+  // Payslips are legal documents, so they carry the full name rather than the display name.
+  const legal = await prisma.profile.findUnique({ where: { userId: slip.userId }, select: { legalName: true } });
+  const info = [['Employee', legal?.legalName || slip.user.name], ['Employee no.', slip.user.employeeNo], ['Job title', slip.contract.jobTitle || slip.user.jobTitle || ''], ['Department', slip.user.department?.name || ''], ['Period', `${fromDbDate(slip.periodStart)} to ${fromDbDate(slip.periodEnd)}`], ['Worked days', String(slip.workedDays)]];
   info.forEach(([k, v], i) => {
     const x = i % 2 ? 300 : 50;
     const y = top + Math.floor(i / 2) * 17;
@@ -213,8 +215,8 @@ router.get('/payslips/:id/pdf', h(async (req, res) => {
 }));
 
 router.get('/runs/:id/export', manage, h(async (req, res) => {
-  const slips = await prisma.payslip.findMany({ where: { runId: intParam(req.params.id) }, include: { user: { select: { name: true, employeeNo: true } } } });
-  const rows = slips.map((s) => [s.user.employeeNo, `"${s.user.name}"`, s.gross, s.deductions, s.net].join(','));
+  const slips = await prisma.payslip.findMany({ where: { runId: intParam(req.params.id) }, include: { user: { select: { name: true, employeeNo: true, profile: { select: { legalName: true } } } } } });
+  const rows = slips.map((s) => [s.user.employeeNo, `"${s.user.profile?.legalName || s.user.name}"`, s.gross, s.deductions, s.net].join(','));
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename="payroll.csv"');
   res.send(`employee_no,name,gross,deductions,net\n${rows.join('\n')}\n`);

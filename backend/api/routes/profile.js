@@ -8,14 +8,14 @@ const { adminIds, canAccessUser, isAdmin } = require('../../lib/access');
 const { can, isOwner } = require('../../lib/permissions');
 const { notify } = require('../../lib/notify');
 const { toDbDate, fromDbDate } = require('../../lib/time');
-const { fullName } = require('../../lib/names');
+const { fullName, isOwnName } = require('../../lib/names');
 
 const router = express.Router();
 router.use(authenticate);
 
 // PRF-02: saved at once, HR told with old and new values.
 const INSTANT = {
-  preferredName: 'Preferred name', salutation: 'Salutation', pronoun: 'Pronoun', gender: 'Gender', nationality: 'Nationality', bloodGroup: 'Blood group', religion: 'Religion', race: 'Race', maritalStatus: 'Marital status',
+  preferredName: 'Preferred name', displayName: 'Display name', salutation: 'Salutation', pronoun: 'Pronoun', gender: 'Gender', nationality: 'Nationality', bloodGroup: 'Blood group', religion: 'Religion', race: 'Race', maritalStatus: 'Marital status',
   idExpiry: 'ID expiry date', permitExpiry: 'Permit expiry date',
   phone: 'Mobile number', homePhone: 'Home phone', officePhone: 'Office phone', personalEmail: 'Personal email',
   address: 'Permanent address', city: 'City', state: 'State', zipCode: 'Zip code', country: 'Country', contactNumber: 'Contact number',
@@ -49,10 +49,12 @@ const SENSITIVE = {
 // The name on the account is always built from the name fields.
 async function syncName(userId) {
   const profile = await prisma.profile.findUnique({ where: { userId } });
-  const name = fullName(profile);
-  if (!name) return;
-  await prisma.user.update({ where: { id: userId }, data: { name } });
-  await prisma.profile.update({ where: { userId }, data: { legalName: name } });
+  const legal = fullName(profile);
+  if (!legal) return;
+  // A display name made from a name that has since changed no longer applies.
+  const displayName = isOwnName(profile, profile.displayName) ? profile.displayName : null;
+  await prisma.user.update({ where: { id: userId }, data: { name: displayName || legal } });
+  await prisma.profile.update({ where: { userId }, data: { legalName: legal, displayName } });
 }
 
 // HR setting or correcting someone's record directly. No change request: HR is the approver.
@@ -67,7 +69,7 @@ async function saveHrProfile(userId, body) {
   // Unlike the other sensitive fields, a middle name can be cleared.
   if (body.middleName !== undefined) data.middleName = body.middleName || null;
   await prisma.profile.upsert({ where: { userId }, create: { userId, ...data }, update: data });
-  if (data.firstName || data.lastName || body.middleName !== undefined) await syncName(userId);
+  if (data.firstName || data.lastName || data.displayName !== undefined || body.middleName !== undefined) await syncName(userId);
 }
 
 function sensitiveValue(profile, field) {
@@ -104,6 +106,12 @@ async function profileView(userId) {
 
 router.get('/me', h(async (req, res) => res.json({ profile: await profileView(req.user.id) })));
 
+// Everyone's photo, so any screen that only knows a name can show the right face.
+router.get('/avatars', h(async (req, res) => {
+  const rows = await prisma.user.findMany({ where: { role: { not: 'SUPER_ADMIN' } }, select: { id: true, name: true, profile: { select: { photoFileId: true } } } });
+  res.json({ people: rows.map((u) => ({ id: u.id, name: u.name, photoFileId: u.profile?.photoFileId || null })) });
+}));
+
 router.get('/me/history', h(async (req, res) => {
   const [changes, requests] = await Promise.all([
     prisma.profileChange.findMany({ where: { userId: req.user.id }, orderBy: { createdAt: 'desc' }, take: 30 }),
@@ -123,6 +131,7 @@ router.patch('/me', h(async (req, res) => {
   const body = req.body || {};
   const profile = await prisma.profile.upsert({ where: { userId: req.user.id }, create: { userId: req.user.id }, update: {} });
 
+  if (body.displayName && !isOwnName({ ...profile, preferredName: body.preferredName ?? profile.preferredName }, body.displayName)) throw new HttpError(400, 'Your display name must use your own names');
   const instant = {};
   const changes = [];
   for (const [field, label] of Object.entries(INSTANT)) {
@@ -155,7 +164,7 @@ router.patch('/me', h(async (req, res) => {
 
   if (Object.keys(instant).length) {
     await prisma.profile.update({ where: { userId: req.user.id }, data: instant });
-    if (instant.middleName) await syncName(req.user.id);
+    if (instant.middleName || instant.displayName !== undefined || instant.preferredName !== undefined) await syncName(req.user.id);
   }
   if (changes.length) {
     await prisma.profileChange.createMany({ data: changes.map((c) => ({ ...c, userId: req.user.id, actorId: req.user.id })) });

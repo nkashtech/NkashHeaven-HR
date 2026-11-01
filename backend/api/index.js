@@ -29,6 +29,7 @@ const appraisalRoutes = require('./routes/appraisals');
 const publicRoutes = require('./routes/public');
 const roleRoutes = require('./routes/roles');
 const cardRoutes = require('./routes/cards');
+const liveRoutes = require('./routes/live');
 const { HttpError } = require('./middleware/validation');
 const { requestMetrics, logError } = require('../lib/monitor');
 const { handleBrevoEvent } = require('../lib/email');
@@ -51,7 +52,9 @@ app.use(helmet({
   },
 }));
 app.use(requestMetrics);
-app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 100000 : 5000, standardHeaders: true, legacyHeaders: false }));
+// A whole office shares one address, and open tabs check in for updates every few seconds.
+const isHeartbeat = (req) => req.path.startsWith('/api/live') || /^\/api\/chat\/calls\/\d+$/.test(req.path);
+app.use(rateLimit({ skip: isHeartbeat, windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 100000 : 5000, standardHeaders: true, legacyHeaders: false }));
 app.use(cors({
   origin(origin, callback) {
     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
@@ -82,6 +85,7 @@ app.use('/api/people', peopleRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/chat', chatRoutes);
+app.use('/api/live', liveRoutes);
 app.use('/api/calendar', calendarRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/approvals', approvalRoutes);

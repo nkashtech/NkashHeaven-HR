@@ -22,7 +22,7 @@ export const SECTIONS = [
     fields: [
       ['salutation', 'Salutation', select('Mr.', 'Mrs.', 'Ms.', 'Dr.', 'Prof.')],
       ['firstName', 'First name', { sensitive: true, selfOnly: true, name: true }], ['middleName', 'Middle name', { sensitive: true, selfOnly: true, name: true }], ['lastName', 'Surname', { sensitive: true, selfOnly: true, name: true }],
-      ['preferredName', 'Nickname'], ['pronoun', 'Pronoun', select('He / Him', 'She / Her', 'They / Them')], ['birthDate', 'Date of birth', { type: 'date', sensitive: true }],
+      ['preferredName', 'Nickname'], ['displayName', 'Display name', { selfOnly: true, picks: true }], ['pronoun', 'Pronoun', select('He / Him', 'She / Her', 'They / Them')], ['birthDate', 'Date of birth', { type: 'date', sensitive: true }],
       ['gender', 'Gender', select('Male', 'Female', 'Other', 'Prefer not to say')], ['nationality', 'Nationality', suggest(...NATIONALITIES)],
       ['bloodGroup', 'Blood group', select('A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-')], ['religion', 'Religion', suggest(...RELIGIONS)],
       ['race', 'Race', select('African', 'Coloured', 'Indian', 'White', 'Other')], ['maritalStatus', 'Marital status', select('Single', 'Married', 'Divorced', 'Widowed')],
@@ -113,6 +113,7 @@ function ListEditor({ section, value, onChange, disabled }) {
 
 function Input({ spec, value, masks, onChange, mode }) {
   const [key, label, opts = {}] = spec
+  if (opts.picks) return <div><DisplayName value={value} onChange={onChange} /></div>
   const set = (e) => onChange(autofill(value, key, e.target.value))
   const tidy = () => { if (opts.name) onChange({ ...value, [key]: properName(value[key]) }) }
   const hint = [opts.autoHint, opts.sensitive && mode === 'self' ? 'Changes need HR approval' : ''].filter(Boolean).join(' ') || undefined
@@ -120,6 +121,24 @@ function Input({ spec, value, masks, onChange, mode }) {
     ? <select className="input" value={value[key] || ''} onChange={set}><option value="">Choose</option>{opts.options.map((o) => <option key={o}>{o}</option>)}</select>
     : <input type={opts.type || 'text'} className="input" autoComplete="off" placeholder={masks?.[key] || ''} list={opts.suggestions && `${key}-list`} value={value[key] || ''} onChange={set} onBlur={tidy} />
   return <div className={opts.wide ? 'sm:col-span-2' : ''}><Field label={label} hint={hint}>{body}{opts.suggestions && <datalist id={`${key}-list`}>{opts.suggestions.map((o) => <option key={o} value={o} />)}</datalist>}</Field></div>
+}
+
+// The ways someone's own names can be shown. They appear on every screen except payslips, which keep the full name.
+function nameChoices({ firstName, middleName, lastName, preferredName }) {
+  const join = (...parts) => parts.filter(Boolean).join(' ')
+  return [...new Set([join(firstName, lastName), join(middleName, lastName), join(preferredName, lastName), join(firstName), join(middleName), join(preferredName)].filter((n) => n && n !== join(firstName, middleName, lastName)))]
+}
+
+function DisplayName({ value, onChange }) {
+  const full = [value.firstName, value.middleName, value.lastName].filter(Boolean).join(' ')
+  return (
+    <Field label="Display name" hint="What others see you as. Payslips keep your full name.">
+      <select className="input" value={value.displayName || ''} onChange={(e) => onChange({ ...value, displayName: e.target.value })}>
+        <option value="">{full || 'Full name'}</option>
+        {nameChoices(value).map((n) => <option key={n}>{n}</option>)}
+      </select>
+    </Field>
+  )
 }
 
 // masks: already-saved secrets shown as a placeholder, so the real value never reaches the form.

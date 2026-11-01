@@ -1,4 +1,4 @@
-import { Component, useEffect, useState } from 'react'
+import { Component, useEffect, useState, useSyncExternalStore } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Loader2, X } from 'lucide-react'
 import { initials } from '../utils/format'
@@ -89,25 +89,47 @@ export const StatusPill = ({ status, children }) => <Pill tone={STATUS_TONE[stat
 const AVATAR_TONES = ['bg-brand-soft text-brand-ink', 'bg-info-soft text-info', 'bg-ok-soft text-ok', 'bg-warn-soft text-warn', 'bg-bad-soft text-bad', 'bg-subtle text-ink-soft']
 const PRESENCE = { in: 'bg-ok', leave: 'bg-info', offline: 'bg-ink-muted' }
 
-function AuthedImage({ fileId, alt }) {
-  const [src, setSrc] = useState(null)
-  useEffect(() => {
-    let url
-    let live = true
-    fetch(`${API_URL}/files/${fileId}`, { headers: { Authorization: `Bearer ${session.token}` } })
-      .then((r) => (r.ok ? r.blob() : null))
-      .then((b) => { if (b && live) { url = URL.createObjectURL(b); setSrc(url) } })
-      .catch(() => {})
-    return () => { live = false; if (url) URL.revokeObjectURL(url) }
-  }, [fileId])
-  return src ? <img src={src} alt={alt} className="h-full w-full object-cover rounded-full" /> : null
+// One download per file, however many times it appears on screen.
+const fileUrls = new Map()
+export function fileUrl(fileId) {
+  if (!fileUrls.has(fileId)) {
+    const url = fetch(`${API_URL}/files/${fileId}`, { headers: { Authorization: `Bearer ${session.token}` } })
+      .then((r) => { if (!r.ok) throw new Error('File not available'); return r.blob() })
+      .then((b) => URL.createObjectURL(b))
+    url.catch(() => fileUrls.delete(fileId))
+    fileUrls.set(fileId, url)
+  }
+  return fileUrls.get(fileId)
 }
 
+export function AuthedImage({ fileId, alt, className = 'h-full w-full object-cover rounded-full' }) {
+  const [src, setSrc] = useState(null)
+  useEffect(() => {
+    let live = true
+    fileUrl(fileId).then((u) => { if (live) setSrc(u) }).catch(() => {})
+    return () => { live = false }
+  }, [fileId])
+  return src ? <img src={src} alt={alt} className={className} /> : null
+}
+
+// Photos by name, so any screen that only has someone's name still shows their face. Two people sharing a name get initials.
+let photos = new Map()
+const watchers = new Set()
+export function setPeoplePhotos(people) {
+  const seen = new Map()
+  people.forEach((p) => seen.set(p.name, seen.has(p.name) ? null : p.photoFileId))
+  photos = seen
+  watchers.forEach((fn) => fn())
+}
+const watch = (fn) => { watchers.add(fn); return () => watchers.delete(fn) }
+
 export function Avatar({ name, size = 36, presence, photoFileId }) {
+  const known = useSyncExternalStore(watch, () => photos)
+  const photo = photoFileId || known.get(String(name || '').replace(' (former employee)', ''))
   const tone = AVATAR_TONES[(name || '').length % AVATAR_TONES.length]
   return (
     <span className={`relative inline-flex shrink-0 items-center justify-center rounded-full font-semibold ${tone}`} style={{ width: size, height: size, fontSize: size * 0.34 }}>
-      {photoFileId ? <AuthedImage fileId={photoFileId} alt={name} /> : initials(name)}
+      {photo ? <AuthedImage fileId={photo} alt={name} /> : initials(name)}
       {presence && (
         <span className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card ${presence.dnd ? 'bg-bad' : PRESENCE[presence.status]}`} title={presence.dnd ? 'Do not disturb' : presence.label} />
       )}

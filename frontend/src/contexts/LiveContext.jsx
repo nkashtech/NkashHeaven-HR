@@ -3,6 +3,7 @@ import { io } from 'socket.io-client'
 import toast from 'react-hot-toast'
 import api, { SOCKET_URL, session, errorMessage } from '../services/api'
 import { useAuth } from './AuthContext'
+import { setPeoplePhotos } from '../components/ui'
 
 const LiveContext = createContext(null)
 export const useLive = () => useContext(LiveContext)
@@ -45,21 +46,59 @@ export function LiveProvider({ children }) {
     refreshCounts().catch(() => {})
   }, [refreshAttendance, refreshCounts]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  const receive = useCallback((event, payload) => {
+    if (event === 'chat:message' && payload.senderId !== user.id && !window.location.pathname.startsWith('/chat')) setUnreadChat((n) => n + 1)
+    if (event === 'notification') {
+      setUnreadBell((c) => c + 1)
+      if (!(payload.type === 'chat.message' && window.location.pathname.startsWith('/chat'))) toast(payload.title, { icon: '🔔' })
+    }
+    ;(listeners.current.get(event) || []).forEach((fn) => fn(payload))
+  }, [user.id])
+
   useEffect(() => {
     // A host without live connections, like Vercel, gets a few tries rather than retrying forever.
     const socket = io(SOCKET_URL, { auth: { token: session.token }, transports: ['websocket', 'polling'], reconnectionAttempts: 5 })
     socketRef.current = socket
-    const fan = (event) => (payload) => (listeners.current.get(event) || []).forEach((fn) => fn(payload))
-    ;['chat:message', 'chat:updated', 'chat:typing', 'presence', 'calendar:synced', 'connect'].forEach((e) => socket.on(e, fan(e)))
-    socket.on('chat:message', (m) => {
-      if (m.senderId !== user.id && !window.location.pathname.startsWith('/chat')) setUnreadChat((n) => n + 1)
-    })
-    socket.on('notification', (n) => {
-      setUnreadBell((c) => c + 1)
-      toast(n.title, { icon: '🔔' })
-    })
+    ;['chat:message', 'chat:updated', 'chat:typing', 'presence', 'calendar:synced', 'connect', 'notification', 'call:ring'].forEach((e) => socket.on(e, (payload) => receive(e, payload)))
     return () => socket.disconnect()
-  }, [user.id])
+  }, [receive])
+
+  // Without a live connection the browser asks for news: often in chat, less elsewhere, rarely in a hidden tab.
+  useEffect(() => {
+    let stop = false
+    let timer
+    let cursor = {}
+    const pause = () => {
+      if (document.hidden) return 15000
+      return window.location.pathname.startsWith('/chat') ? 3000 : 10000
+    }
+    const check = async () => {
+      if (!socketRef.current?.connected) {
+        try {
+          const { data } = await api.get('/live', { params: cursor, quiet: true })
+          if (stop) return
+          cursor = { ...data.cursor, at: data.at }
+          data.messages.forEach((m) => receive('chat:message', m))
+          data.updated.forEach((m) => receive('chat:updated', m))
+          data.notifications.forEach((n) => receive('notification', n))
+          data.calls.forEach((c) => receive('call:ring', c))
+        } catch { /* The next check catches up. */ }
+      }
+      if (!stop) timer = setTimeout(check, pause())
+    }
+    const wake = () => { if (!document.hidden) { clearTimeout(timer); check() } }
+    check()
+    document.addEventListener('visibilitychange', wake)
+    return () => { stop = true; clearTimeout(timer); document.removeEventListener('visibilitychange', wake) }
+  }, [receive])
+
+  useEffect(() => {
+    const load = () => api.get('/profile/avatars', { quiet: true }).then(({ data }) => setPeoplePhotos(data.people)).catch(() => {})
+    load()
+    const id = setInterval(load, 300000)
+    window.addEventListener('photo:changed', load)
+    return () => { clearInterval(id); window.removeEventListener('photo:changed', load) }
+  }, [])
 
   const on = useCallback((event, fn) => {
     const list = listeners.current.get(event) || []

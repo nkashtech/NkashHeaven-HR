@@ -284,6 +284,8 @@ model Profile {
   emergencyPhone    String?
   emergencyEmail    String?
   salutation      String?
+  // What others see. Built only from the person's own names, and empty means the full name.
+  displayName     String?
   firstName       String?
   middleName      String?
   lastName        String?
@@ -849,15 +851,65 @@ model Message {
   body           String?   @db.Text
   attachmentId   Int?
   link           String?
+  // The message this one quotes
+  replyToId      Int?
+  // The original sender's name, on a forwarded copy
+  forwardedFrom  String?
   pinnedAt       DateTime?
   pinnedById     Int?
   editedAt       DateTime?
   deletedAt      DateTime?
   createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @default(now()) @updatedAt
 
   conversation Conversation @relation(fields: [conversationId], references: [id])
 
   @@index([conversationId, createdAt])
+  @@index([conversationId, updatedAt])
+}
+
+// A call inside a conversation. Audio and video go directly between browsers; these rows only introduce them.
+model Call {
+  id             Int       @id @default(autoincrement())
+  companyId      Int
+  conversationId Int
+  startedById    Int
+  video          Boolean   @default(true)
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+
+  members CallMember[]
+
+  @@index([conversationId, endedAt])
+}
+
+model CallMember {
+  id         Int       @id @default(autoincrement())
+  companyId  Int
+  callId     Int
+  userId     Int
+  joinedAt   DateTime?
+  leftAt     DateTime?
+  declinedAt DateTime?
+  lastSeenAt DateTime?
+
+  call Call @relation(fields: [callId], references: [id])
+
+  @@unique([callId, userId])
+}
+
+// Connection details passed from one browser to another while a call is being set up.
+model CallSignal {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  callId    Int
+  fromId    Int
+  toId      Int
+  kind      String
+  payload   String   @db.MediumText
+  createdAt DateTime @default(now())
+
+  @@index([callId, toId, id])
 }
 
 model CalendarConnection {

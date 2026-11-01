@@ -1833,3 +1833,124 @@ describe('editing departments and teams', () => {
     expect((await as('hr').patch(`/settings/teams/${team.id}`, { name: '' })).status).toBe(400);
   });
 });
+
+describe('chat: quotes, forwards, pins and live updates', () => {
+  let conv;
+  const dm = async (who, other) => (await as(who).post('/chat/direct', { userId: ids[other] })).body.conversationId;
+  const say = async (who, id, body, extra = {}) => (await as(who).post(`/chat/conversations/${id}/messages`, { body, ...extra })).body.message;
+
+  beforeAll(async () => { conv = await dm('emp', 'lead'); });
+
+  it('quotes a message from the same conversation only', async () => {
+    const first = await say('emp', conv, 'Original words');
+    const reply = await say('lead', conv, 'I agree', { replyToId: first.id });
+    expect(reply.reply).toMatchObject({ id: first.id, body: 'Original words' });
+    expect(reply.reply.senderName).toBe(first.senderName);
+    const other = await dm('emp', 'hr');
+    expect((await as('emp').post(`/chat/conversations/${other}/messages`, { body: 'x', replyToId: first.id })).status).toBe(400);
+  });
+
+  it('forwards a copy naming the original sender, only where the person belongs', async () => {
+    const source = await say('lead', conv, 'Please pass this on');
+    const target = await dm('emp', 'hr');
+    expect((await as('emp').post(`/chat/messages/${source.id}/forward`, { conversationIds: [target] })).status).toBe(201);
+    const { messages } = (await as('hr').get(`/chat/conversations/${target}/messages`)).body;
+    expect(messages[messages.length - 1]).toMatchObject({ body: 'Please pass this on', forwardedFrom: source.senderName });
+    const stranger = await dm('hr', 'lead');
+    expect((await as('emp').post(`/chat/messages/${source.id}/forward`, { conversationIds: [stranger] })).status).toBe(403);
+    expect((await as('hr').post(`/chat/messages/${source.id}/forward`, { conversationIds: [target] })).status).toBe(403);
+  });
+
+  it('a pin shows in the list and can be undone', async () => {
+    const m = await say('emp', conv, 'Keep this');
+    expect((await as('lead').post(`/chat/messages/${m.id}/pin`)).body.message.pinned).toBe(true);
+    expect((await as('emp').get(`/chat/conversations/${conv}`)).body.pins.map((p) => p.id)).toContain(m.id);
+    await as('emp').post(`/chat/messages/${m.id}/pin`);
+    expect((await as('emp').get(`/chat/conversations/${conv}`)).body.pins.map((p) => p.id)).not.toContain(m.id);
+  });
+
+  it('live check delivers new messages, edits and notifications once', async () => {
+    const first = (await as('lead').get('/live')).body;
+    expect(first.messages).toEqual([]);
+    const params = (c, at) => `?message=${c.message}&notification=${c.notification}&at=${encodeURIComponent(at)}`;
+    const m = await say('emp', conv, 'Live hello');
+    await as('emp').post(`/chat/messages/${m.id}/pin`);
+    await runAs((await asPlatform(async () => await prisma.user.findUnique({ where: { id: ids.lead } }))).companyId, async () => { await prisma.notification.create({ data: { userId: ids.lead, type: 'test.live', title: 'Live note' } }); });
+    const second = (await as('lead').get(`/live${params(first.cursor, first.at)}`)).body;
+    expect(second.messages.map((x) => x.id)).toContain(m.id);
+    expect(second.messages.find((x) => x.id === m.id).pinned).toBe(true);
+    expect(second.notifications.length).toBeGreaterThan(0);
+    const third = (await as('lead').get(`/live${params(second.cursor, new Date(Date.now() + 10000).toISOString())}`)).body;
+    expect(third.messages).toEqual([]);
+    expect(third.notifications).toEqual([]);
+    const stale = (await as('hr').get('/live')).body;
+    const hrs = (await as('hr').get(`/live${params(stale.cursor, stale.at)}`)).body;
+    expect(hrs.messages.map((x) => x.id)).not.toContain(m.id);
+  });
+});
+
+describe('calls', () => {
+  let conv;
+  beforeAll(async () => { conv = (await as('emp').post('/chat/direct', { userId: ids.nosup })).body.conversationId; });
+
+  it('rings the other person, connects them, and ends for both', async () => {
+    const start = await as('emp').post(`/chat/conversations/${conv}/calls`, { video: false });
+    expect(start.status).toBe(201);
+    const { call } = start.body;
+    const again = await as('emp').post(`/chat/conversations/${conv}/calls`, { video: true });
+    expect(again.body.call.id).toBe(call.id);
+    await prisma.$executeRawUnsafe('SELECT 1');
+    const live = (await as('nosup').get(`/live?at=${encodeURIComponent(new Date().toISOString())}&message=999999999&notification=999999999`)).body;
+    expect(live.calls.map((c) => c.id)).toContain(call.id);
+    const joined = await as('nosup').post(`/chat/calls/${call.id}/join`);
+    expect(joined.body.peers.map((p) => p.id)).toEqual([ids.emp]);
+    expect((await as('nosup').post(`/chat/calls/${call.id}/signal`, { toId: ids.emp, kind: 'offer', payload: '{"sdp":"x"}' })).status).toBe(201);
+    const seen = (await as('emp').get(`/chat/calls/${call.id}`)).body;
+    expect(seen.signals).toHaveLength(1);
+    expect(seen.members).toHaveLength(2);
+    expect((await as('emp').get(`/chat/calls/${call.id}?after=${seen.signals[0].id}`)).body.signals).toEqual([]);
+    expect((await as('hr').get(`/chat/calls/${call.id}`)).status).toBe(403);
+    await as('nosup').post(`/chat/calls/${call.id}/leave`);
+    expect((await as('emp').get(`/chat/calls/${call.id}`)).body.call.endedAt).toBeTruthy();
+    const { messages } = (await as('emp').get(`/chat/conversations/${conv}/messages`)).body;
+    expect(messages[messages.length - 1].body).toMatch(/^Call ended/);
+  });
+
+  it('a declined direct call ends as missed', async () => {
+    const { call } = (await as('emp').post(`/chat/conversations/${conv}/calls`, {})).body;
+    await as('nosup').post(`/chat/calls/${call.id}/decline`);
+    const { messages } = (await as('emp').get(`/chat/conversations/${conv}/messages`)).body;
+    expect(messages[messages.length - 1].body).toBe('Missed call');
+  });
+
+  it('only accepts real meeting links', async () => {
+    const post = (url) => as('emp').post(`/chat/conversations/${conv}/meeting-link`, { url });
+    expect((await post('https://meet.google.com/abc-defg-hij')).status).toBe(201);
+    expect((await post('https://meet.google.com/new')).status).toBe(400);
+    expect((await post('https://evil.example/abc')).status).toBe(400);
+  });
+});
+
+describe('display names and photos', () => {
+  const set = async (who, profile) => as(who).patch('/profile/me', profile);
+
+  it('shows the chosen name everywhere, keeps the full name, and refuses someone else\'s name', async () => {
+    await asPlatform(async () => { await prisma.profile.update({ where: { userId: ids.nosup }, data: { firstName: 'Elivi', middleName: 'Elvis', lastName: 'Boka', displayName: null, legalName: 'Elivi Elvis Boka' } }); });
+    expect((await set('nosup', { displayName: 'Elvis Boka' })).status).toBe(200);
+    const me = (await as('nosup').get('/profile/me')).body.profile;
+    expect(me.name).toBe('Elvis Boka');
+    expect(me.legalName).toBe('Elivi Elvis Boka');
+    expect((await set('nosup', { displayName: 'The Boss' })).status).toBe(400);
+    expect((await set('nosup', { displayName: '' })).status).toBe(200);
+    expect((await as('nosup').get('/profile/me')).body.profile.name).toBe('Elivi Elvis Boka');
+  });
+
+  it('lists photos for the signed-in company only', async () => {
+    await asPlatform(async () => { await prisma.profile.update({ where: { userId: ids.emp }, data: { photoFileId: 987654 } }); });
+    const { people } = (await as('hr').get('/profile/avatars')).body;
+    expect(people.find((p) => p.id === ids.emp).photoFileId).toBe(987654);
+    const other = await asPlatform(async () => await prisma.user.findFirst({ where: { companyId: { not: people[0] && (await prisma.user.findUnique({ where: { id: ids.emp } })).companyId }, role: { not: 'SUPER_ADMIN' } } }));
+    if (other) expect(people.map((p) => p.id)).not.toContain(other.id);
+    await asPlatform(async () => { await prisma.profile.update({ where: { userId: ids.emp }, data: { photoFileId: null } }); });
+  });
+});

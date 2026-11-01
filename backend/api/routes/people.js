@@ -12,7 +12,7 @@ router.use(authenticate);
 router.use(requirePerm('module.people', 'users.manage'));
 
 const includeBasics = { department: { select: { id: true, name: true } }, profile: true };
-const display = (u) => u.profile?.preferredName ? `${u.profile.preferredName} ${u.name.split(' ').slice(-1)[0]}` : u.name;
+const display = (u) => u.name;
 
 function nextOccurrence(monthDay, day) {
   const year = yearOf(day);

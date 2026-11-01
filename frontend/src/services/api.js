@@ -29,7 +29,7 @@ export const session = {
 api.interceptors.request.use((config) => {
   const token = session.token
   if (token) config.headers.Authorization = `Bearer ${token}`
-  config.busyButton = startBusy()
+  config.busyButton = config.quiet ? null : startBusy()
   return config
 })
 

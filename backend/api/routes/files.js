@@ -17,6 +17,7 @@ const ALLOWED = [
   'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   'application/vnd.ms-powerpoint', 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'text/plain', 'text/csv', 'application/zip', 'application/x-zip-compressed',
 ];
 const PURPOSES = ['chat', 'leave', 'photo', 'profile', 'branding', 'contract'];
 
@@ -30,7 +31,7 @@ router.post('/', (req, res, next) => {
   }));
 }, h(async (req, res) => {
   if (!req.file) throw new HttpError(400, 'Choose a file');
-  if (!ALLOWED.includes(req.file.mimetype)) throw new HttpError(415, 'That file type is not allowed. Use PDF, images or Office files.');
+  if (!ALLOWED.includes(req.file.mimetype)) throw new HttpError(415, 'That file type is not allowed. Use PDF, images, Office, text, CSV or ZIP files.');
   const purpose = PURPOSES.includes(req.body.purpose) ? req.body.purpose : 'chat';
   if (['photo', 'branding'].includes(purpose) && !req.file.mimetype.startsWith('image/')) throw new HttpError(415, 'This must be an image');
   if (purpose === 'branding' && !(await can(req.user, 'branding.manage'))) throw new HttpError(403, 'Only company admins can upload this');
@@ -57,6 +58,8 @@ router.get('/:id', h(async (req, res) => {
   if (!data) throw new HttpError(404, 'File not found');
   res.setHeader('Content-Type', file.mime);
   res.setHeader('X-Content-Type-Options', 'nosniff');
+  // A new photo or logo is a new file, so these never change.
+  if (['photo', 'branding'].includes(file.purpose)) res.setHeader('Cache-Control', 'private, max-age=604800, immutable');
   res.setHeader('Content-Disposition', `${file.mime.startsWith('image/') ? 'inline' : 'attachment'}; filename="${encodeURIComponent(file.name)}"`);
   res.send(data);
 }));

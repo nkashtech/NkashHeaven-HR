@@ -6,4 +6,11 @@ function splitName(name) {
 
 const fullName = ({ firstName, middleName, lastName }) => [firstName, middleName, lastName].filter(Boolean).join(' ');
 
-module.exports = { splitName, fullName };
+// A display name may only use words from the person's own names or nickname.
+function isOwnName({ firstName, middleName, lastName, preferredName }, displayName) {
+  if (!displayName) return true;
+  const allowed = new Set([firstName, middleName, lastName, preferredName].filter(Boolean).join(' ').toLowerCase().split(/\s+/));
+  return displayName.trim().toLowerCase().split(/\s+/).every((word) => allowed.has(word));
+}
+
+module.exports = { splitName, fullName, isOwnName };

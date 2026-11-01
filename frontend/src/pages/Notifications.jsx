@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useLive } from '../contexts/LiveContext'
 import { useFetch } from '../components/hooks'
@@ -10,8 +10,9 @@ export default function Notifications() {
   const [group, setGroup] = useState('')
   const [unreadOnly, setUnreadOnly] = useState(false)
   const { data, error, reload } = useFetch(`/notifications?group=${group}&unread=${unreadOnly}`)
-  const { setUnreadBell } = useLive()
+  const { setUnreadBell, on } = useLive()
   const navigate = useNavigate()
+  useEffect(() => on('notification', reload), [on, reload])
   if (error) return <PageError message={error} onRetry={reload} />
   if (!data) return <PageLoader />
   const open = async (n) => {

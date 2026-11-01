@@ -118,7 +118,13 @@ router.post('/conversations/:id/messages', h(async (req, res) => {
     const existing = await prisma.message.findUnique({ where: { clientId: String(clientId) } });
     if (existing) return res.json({ message: (await chat.hydrate([existing]))[0] });
   }
-  const message = await chat.postMessage({ conversationId: id, senderId: req.user.id, body, attachmentId, clientId: clientId ? String(clientId) : null });
+  let replyToId = null;
+  if (req.body.replyToId) {
+    const quoted = await prisma.message.findUnique({ where: { id: Number(req.body.replyToId) } });
+    if (!quoted || quoted.conversationId !== id) throw new HttpError(400, 'That message is not in this conversation');
+    replyToId = quoted.id;
+  }
+  const message = await chat.postMessage({ conversationId: id, senderId: req.user.id, body, attachmentId, replyToId, clientId: clientId ? String(clientId) : null });
   await prisma.conversationMember.update({ where: { conversationId_userId: { conversationId: id, userId: req.user.id } }, data: { lastReadAt: new Date() } });
   return res.status(201).json({ message });
 }));
@@ -184,6 +190,28 @@ router.post('/messages/:id/pin', h(async (req, res) => {
   res.json({ message: await pushUpdate(updated) });
 }));
 
+// A copy in each chosen conversation, naming who wrote it first.
+router.post('/messages/:id/forward', h(async (req, res) => {
+  required(req.body, ['conversationIds']);
+  const source = await prisma.message.findUnique({ where: { id: intParam(req.params.id) } });
+  if (!source || source.deletedAt) throw new HttpError(404, 'Message not found');
+  await membership(source.conversationId, req.user.id);
+  const targets = [...new Set(req.body.conversationIds.map(Number))].slice(0, 20);
+  if (!targets.length) throw new HttpError(400, 'Choose where to forward it');
+  const convs = await prisma.conversation.findMany({ where: { id: { in: targets } } });
+  for (const conv of convs) {
+    await membership(conv.id, req.user.id);
+    if (conv.type === 'BOT') throw new HttpError(403, 'HR Assistant only sends notifications');
+    if (conv.channelKind === 'ANNOUNCEMENTS' && !(await can(req.user, 'chat.post_announcements'))) throw new HttpError(403, 'Only HR and managers can post in #announcements');
+  }
+  if (convs.length !== targets.length) throw new HttpError(404, 'Conversation not found');
+  const [original] = await chat.hydrate([source]);
+  for (const conv of convs) {
+    await chat.postMessage({ conversationId: conv.id, senderId: req.user.id, body: source.body, attachmentId: source.attachmentId, forwardedFrom: original.senderName });
+  }
+  res.status(201).json({ forwarded: convs.length });
+}));
+
 // CHT-06
 router.get('/search', h(async (req, res) => {
   const q = String(req.query.q || '').trim();
@@ -214,14 +242,119 @@ router.get('/people', h(async (req, res) => {
   res.json({ people: users.map((u) => ({ id: u.id, name: u.name, jobTitle: u.jobTitle, presence: presence.get(u.id) })) });
 }));
 
-// CHT-11: Meet and Teams don't let a read-only account create rooms, so this posts a "start a meeting" link.
-router.post('/conversations/:id/call', h(async (req, res) => {
+// CHT-11: Meet and Teams have no way to start a shared room from here, so the person creates one there and shares its link.
+const MEETING_HOSTS = ['meet.google.com', 'teams.microsoft.com', 'teams.live.com'];
+router.post('/conversations/:id/meeting-link', h(async (req, res) => {
   const id = intParam(req.params.id);
   await membership(id, req.user.id);
-  const conn = await prisma.calendarConnection.findFirst({ where: { userId: req.user.id, status: 'CONNECTED' } });
-  const url = conn?.provider === 'MICROSOFT' ? 'https://teams.microsoft.com/l/meeting/new' : 'https://meet.google.com/new';
-  const message = await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} started a video call`, link: url });
-  res.status(201).json({ message, url });
+  let url;
+  try { url = new URL(String(req.body.url || '').trim()); } catch { throw new HttpError(400, 'Paste the full meeting link'); }
+  if (url.protocol !== 'https:' || !MEETING_HOSTS.includes(url.hostname) || url.pathname.endsWith('/new')) throw new HttpError(400, 'Paste a Google Meet or Microsoft Teams meeting link');
+  const message = await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} shared a meeting`, link: url.href });
+  res.status(201).json({ message });
+}));
+
+// Calls in the app. Browsers connect to each other directly, so everyone in a call sends to everyone else: past a handful of people that stops working well.
+const MAX_IN_CALL = 6;
+const STALE_MS = 20000;
+
+const callMembers = async (callId) => {
+  const rows = await prisma.callMember.findMany({ where: { callId, joinedAt: { not: null }, leftAt: null } });
+  const users = await prisma.user.findMany({ where: { id: { in: rows.map((r) => r.userId) } }, select: { id: true, name: true } });
+  return users;
+};
+
+async function endCall(call) {
+  if (call.endedAt) return;
+  const { count } = await prisma.call.updateMany({ where: { id: call.id, endedAt: null }, data: { endedAt: new Date() } });
+  if (!count) return;
+  await prisma.callSignal.deleteMany({ where: { callId: call.id } });
+  const answered = await prisma.callMember.count({ where: { callId: call.id, joinedAt: { not: null }, userId: { not: call.startedById } } });
+  const minutes = Math.max(1, Math.round((Date.now() - call.startedAt.getTime()) / 60000));
+  await chat.postMessage({ conversationId: call.conversationId, senderId: call.startedById, body: answered ? `Call ended · ${minutes} min` : 'Missed call' });
+}
+
+async function loadCall(req) {
+  const call = await prisma.call.findUnique({ where: { id: intParam(req.params.id) } });
+  if (!call) throw new HttpError(404, 'Call not found');
+  await membership(call.conversationId, req.user.id);
+  return call;
+}
+
+// Someone whose browser stopped checking in has left, and a call with nobody in it is over.
+async function sweep(call) {
+  await prisma.callMember.updateMany({ where: { callId: call.id, joinedAt: { not: null }, leftAt: null, lastSeenAt: { lt: new Date(Date.now() - STALE_MS) } }, data: { leftAt: new Date() } });
+  if (!(await prisma.callMember.count({ where: { callId: call.id, joinedAt: { not: null }, leftAt: null } }))) await endCall(call);
+}
+
+const callView = (c) => ({ id: c.id, conversationId: c.conversationId, video: c.video, startedById: c.startedById, startedAt: c.startedAt, endedAt: c.endedAt });
+
+router.post('/conversations/:id/calls', h(async (req, res) => {
+  const id = intParam(req.params.id);
+  await membership(id, req.user.id);
+  const conv = await prisma.conversation.findUnique({ where: { id } });
+  if (conv.type === 'BOT') throw new HttpError(403, 'You cannot call HR Assistant');
+  const running = await prisma.call.findFirst({ where: { conversationId: id, endedAt: null } });
+  if (running) {
+    await sweep(running);
+    const still = await prisma.call.findUnique({ where: { id: running.id } });
+    if (!still.endedAt) return res.json({ call: callView(still), joined: false });
+  }
+  const now = new Date();
+  const call = await prisma.call.create({ data: { conversationId: id, startedById: req.user.id, video: req.body.video !== false, members: { create: { userId: req.user.id, joinedAt: now, lastSeenAt: now } } } });
+  await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} started a ${call.video ? 'video' : 'voice'} call`, link: `/chat?c=${id}&call=${call.id}` });
+  emitToUsers((await chat.memberIds(id)).filter((u) => u !== req.user.id), 'call:ring', { ...callView(call), callerName: req.user.name, conversationName: conv.name });
+  return res.status(201).json({ call: callView(call), joined: true });
+}));
+
+router.post('/calls/:id/join', h(async (req, res) => {
+  const call = await loadCall(req);
+  if (call.endedAt) throw new HttpError(409, 'This call has ended');
+  await sweep(call);
+  const inCall = await callMembers(call.id);
+  if (inCall.length >= MAX_IN_CALL && !inCall.some((u) => u.id === req.user.id)) throw new HttpError(409, `Calls can have up to ${MAX_IN_CALL} people`);
+  const now = new Date();
+  const data = { joinedAt: now, lastSeenAt: now, leftAt: null, declinedAt: null };
+  await prisma.callMember.upsert({ where: { callId_userId: { callId: call.id, userId: req.user.id } }, create: { callId: call.id, userId: req.user.id, ...data }, update: data });
+  res.json({ call: callView(call), peers: inCall.filter((u) => u.id !== req.user.id) });
+}));
+
+router.get('/calls/:id', h(async (req, res) => {
+  const call = await loadCall(req);
+  await prisma.callMember.updateMany({ where: { callId: call.id, userId: req.user.id, joinedAt: { not: null }, leftAt: null }, data: { lastSeenAt: new Date() } });
+  await sweep(call);
+  const signals = await prisma.callSignal.findMany({ where: { callId: call.id, toId: req.user.id, id: { gt: Number(req.query.after) || 0 } }, orderBy: { id: 'asc' } });
+  const fresh = await prisma.call.findUnique({ where: { id: call.id } });
+  res.json({ call: callView(fresh), members: await callMembers(call.id), signals: signals.map((s) => ({ id: s.id, fromId: s.fromId, kind: s.kind, payload: s.payload })) });
+}));
+
+router.post('/calls/:id/signal', h(async (req, res) => {
+  required(req.body, ['toId', 'kind', 'payload']);
+  const call = await loadCall(req);
+  if (!['offer', 'answer'].includes(req.body.kind)) throw new HttpError(400, 'Unknown signal');
+  await prisma.callSignal.create({ data: { callId: call.id, fromId: req.user.id, toId: Number(req.body.toId), kind: req.body.kind, payload: String(req.body.payload).slice(0, 200000) } });
+  res.status(201).json({ ok: true });
+}));
+
+async function closeIfDirect(call) {
+  const conv = await prisma.conversation.findUnique({ where: { id: call.conversationId } });
+  if (conv.type === 'DIRECT') await endCall(call);
+  else await sweep(call);
+}
+
+router.post('/calls/:id/decline', h(async (req, res) => {
+  const call = await loadCall(req);
+  const now = new Date();
+  await prisma.callMember.upsert({ where: { callId_userId: { callId: call.id, userId: req.user.id } }, create: { callId: call.id, userId: req.user.id, declinedAt: now }, update: { declinedAt: now } });
+  await closeIfDirect(call);
+  res.json({ ok: true });
+}));
+
+router.post('/calls/:id/leave', h(async (req, res) => {
+  const call = await loadCall(req);
+  await prisma.callMember.updateMany({ where: { callId: call.id, userId: req.user.id }, data: { leftAt: new Date() } });
+  await closeIfDirect(call);
+  res.json({ ok: true });
 }));
 
 // CHT-09: only with a logged reason, and only that conversation.

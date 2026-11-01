@@ -1,12 +1,13 @@
 const prisma = require('./prisma');
-const { emitToUsers, isUserOnline } = require('./realtime');
+const { emitToUsers, isRealtimeUp, isUserOnline } = require('./realtime');
 const { boardFor } = require('./attendance');
 const { notify } = require('./notify');
 
 const senderSelect = { id: true, name: true, active: true };
 
-function messageView(m, senderMap, fileMap = new Map()) {
+function messageView(m, senderMap, fileMap = new Map(), quoted = new Map()) {
   const sender = m.senderId ? senderMap.get(m.senderId) : null;
+  const reply = m.replyToId ? quoted.get(m.replyToId) : null;
   return {
     id: m.id, conversationId: m.conversationId, clientId: m.clientId, senderId: m.senderId,
     senderName: m.senderId ? sender?.name || 'Unknown' : 'HR Assistant',
@@ -17,36 +18,57 @@ function messageView(m, senderMap, fileMap = new Map()) {
     attachment: m.deletedAt || !m.attachmentId ? null : fileMap.get(m.attachmentId) || null,
     pinned: Boolean(m.pinnedAt),
     edited: Boolean(m.editedAt),
+    forwardedFrom: m.forwardedFrom || null,
+    reply: reply && !m.deletedAt ? {
+      id: reply.id, senderName: reply.senderId ? senderMap.get(reply.senderId)?.name || 'Unknown' : 'HR Assistant',
+      body: reply.deletedAt ? null : reply.body, deleted: Boolean(reply.deletedAt), fileName: reply.deletedAt ? null : fileMap.get(reply.attachmentId)?.name || null,
+    } : null,
     createdAt: m.createdAt,
   };
 }
 
 async function hydrate(messages) {
-  const senderIds = [...new Set(messages.map((m) => m.senderId).filter(Boolean))];
-  const fileIds = [...new Set(messages.map((m) => m.attachmentId).filter(Boolean))];
+  const replyIds = [...new Set(messages.map((m) => m.replyToId).filter(Boolean))];
+  const replies = replyIds.length ? await prisma.message.findMany({ where: { id: { in: replyIds } } }) : [];
+  const all = [...messages, ...replies];
+  const senderIds = [...new Set(all.map((m) => m.senderId).filter(Boolean))];
+  const fileIds = [...new Set(all.map((m) => m.attachmentId).filter(Boolean))];
   const [senders, files] = await Promise.all([
     prisma.user.findMany({ where: { id: { in: senderIds } }, select: senderSelect }),
     prisma.fileObject.findMany({ where: { id: { in: fileIds } }, select: { id: true, name: true, mime: true, size: true } }),
   ]);
   const senderMap = new Map(senders.map((s) => [s.id, s]));
   const fileMap = new Map(files.map((f) => [f.id, f]));
-  return messages.map((m) => messageView(m, senderMap, fileMap));
+  const quoted = new Map(replies.map((r) => [r.id, r]));
+  return messages.map((m) => messageView(m, senderMap, fileMap, quoted));
 }
 
 async function memberIds(conversationId) {
   return (await prisma.conversationMember.findMany({ where: { conversationId }, select: { userId: true } })).map((m) => m.userId);
 }
 
-async function postMessage({ conversationId, senderId, body, attachmentId, link, clientId }) {
-  const message = await prisma.message.create({ data: { conversationId, senderId: senderId ?? null, body, attachmentId, link, clientId } });
+// Without live connections, someone is online if their browser checked in during the last minute and a half.
+async function offlineMembers(ids, senderId) {
+  const others = ids.filter((id) => id !== senderId);
+  if (isRealtimeUp()) {
+    const offline = [];
+    for (const id of others) if (!(await isUserOnline(id))) offline.push(id);
+    return offline;
+  }
+  const seen = await prisma.session.findMany({ where: { userId: { in: others }, revokedAt: null, lastSeenAt: { gt: new Date(Date.now() - 90000) } }, select: { userId: true } });
+  const online = new Set(seen.map((s) => s.userId));
+  return others.filter((id) => !online.has(id));
+}
+
+async function postMessage({ conversationId, senderId, body, attachmentId, link, clientId, replyToId, forwardedFrom }) {
+  const message = await prisma.message.create({ data: { conversationId, senderId: senderId ?? null, body, attachmentId, link, clientId, replyToId, forwardedFrom } });
   await prisma.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: message.createdAt } });
   const ids = await memberIds(conversationId);
   const [view] = await hydrate([message]);
   emitToUsers(ids, 'chat:message', view);
   // UC-11 step 5: anyone offline gets an in-app notification.
   if (senderId) {
-    const offline = [];
-    for (const id of ids) if (id !== senderId && !(await isUserOnline(id))) offline.push(id);
+    const offline = await offlineMembers(ids, senderId);
     if (offline.length) {
       const conv = await prisma.conversation.findUnique({ where: { id: conversationId } });
       await notify(offline, {

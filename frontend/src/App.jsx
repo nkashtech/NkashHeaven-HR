@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom'
 import { useAuth } from './contexts/AuthContext'
 import { LiveProvider } from './contexts/LiveContext'
+import { CallProvider } from './components/Call'
 import { company } from './services/api'
 import Layout from './components/Layout'
 import { PageLoader } from './components/ui'
@@ -78,47 +79,49 @@ function Private() {
   if (!user.setupCompleted && !user.impersonating) return <SetupWizard />
   return (
     <LiveProvider>
-      <Routes>
-        <Route path="kiosk" element={<Guard allow={can('attendance.kiosk')}><Kiosk /></Guard>} />
-        <Route element={<Layout />}>
-          <Route index element={<Home />} />
-          <Route path="attendance" element={<Guard allow={can('module.attendance')}><Attendance /></Guard>} />
-          <Route path="timesheets" element={<Guard allow={can('module.timesheets')}><Timesheets /></Guard>} />
-          <Route path="leave" element={<Guard allow={can('module.leave')}><Leave /></Guard>} />
-          <Route path="calendar" element={<Guard allow={can('module.calendar')}><Calendar /></Guard>} />
-          <Route path="chat" element={<Guard allow={can('module.chat')}><Chat /></Guard>} />
-          <Route path="people" element={<Guard allow={can('module.people')}><People /></Guard>} />
-          <Route path="people/:id" element={<Guard allow={can('module.people')}><PersonProfile /></Guard>} />
-          <Route path="projects" element={<Guard allow={can('module.projects')}><Projects /></Guard>} />
-          <Route path="projects/dashboard" element={<Guard allow={can('module.projects')}><ProjectDashboard /></Guard>} />
-          <Route path="projects/reporting" element={<Guard allow={can('module.projects')}><ProjectReporting /></Guard>} />
-          <Route path="projects/risks" element={<Guard allow={can('module.projects')}><RiskRegisterPage /></Guard>} />
-          <Route path="projects/configuration" element={<Guard allow={can('projects.manage')}><ProjectConfiguration /></Guard>} />
-          <Route path="projects/:id" element={<Guard allow={can('module.projects')}><ProjectDetail /></Guard>} />
-          <Route path="projects/:id/tasks" element={<Guard allow={can('module.projects')}><ProjectTasks /></Guard>} />
-          <Route path="tasks" element={<Guard allow={can('module.projects')}><AllTasks /></Guard>} />
-          <Route path="payslips" element={<Guard allow={can('module.payslips')}><MyPayslips /></Guard>} />
-          <Route path="my-card" element={<Guard allow={can('module.card')}><MyCard /></Guard>} />
-          <Route path="appraisals" element={<Guard allow={can('module.appraisals')}><Appraisals /></Guard>} />
-          <Route path="profile" element={<Profile />} />
-          <Route path="settings" element={<Settings />} />
-          <Route path="notifications" element={<Notifications />} />
-          <Route path="team" element={<Guard allow={isLead}><TeamApprovals /></Guard>} />
-          <Route path="reports" element={<Guard allow={can('reports.view')}><Reports /></Guard>} />
-          <Route path="hr/roles" element={<Guard allow={can('roles.manage')}><HrRoles /></Guard>} />
-          <Route path="hr/employees" element={<Guard allow={can('users.manage')}><Employees /></Guard>} />
-          <Route path="hr/contracts" element={<Guard allow={can('contracts.manage')}><Contracts /></Guard>} />
-          <Route path="hr/payroll" element={<Guard allow={can('payroll.manage')}><Payroll /></Guard>} />
-          <Route path="hr/requests" element={<Guard allow={can('profile.review')}><ChangeRequests /></Guard>} />
-          <Route path="hr/policies" element={<Guard allow={can('org.configure') || can('branding.manage')}><Policies /></Guard>} />
-          <Route path="hr/audit" element={<Guard allow={can('audit.view')}><Audit /></Guard>} />
-          <Route path="system" element={<Guard allow={isSuper}><Health /></Guard>} />
-          <Route path="system/companies" element={<Guard allow={isSuper}><Companies /></Guard>} />
-          <Route path="system/integrations" element={<Guard allow={isSuper}><Integrations /></Guard>} />
-          <Route path="system/settings" element={<Guard allow={isSuper}><SystemSettings /></Guard>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
+      <CallProvider>
+        <Routes>
+          <Route path="kiosk" element={<Guard allow={can('attendance.kiosk')}><Kiosk /></Guard>} />
+          <Route element={<Layout />}>
+            <Route index element={<Home />} />
+            <Route path="attendance" element={<Guard allow={can('module.attendance')}><Attendance /></Guard>} />
+            <Route path="timesheets" element={<Guard allow={can('module.timesheets')}><Timesheets /></Guard>} />
+            <Route path="leave" element={<Guard allow={can('module.leave')}><Leave /></Guard>} />
+            <Route path="calendar" element={<Guard allow={can('module.calendar')}><Calendar /></Guard>} />
+            <Route path="chat" element={<Guard allow={can('module.chat')}><Chat /></Guard>} />
+            <Route path="people" element={<Guard allow={can('module.people')}><People /></Guard>} />
+            <Route path="people/:id" element={<Guard allow={can('module.people')}><PersonProfile /></Guard>} />
+            <Route path="projects" element={<Guard allow={can('module.projects')}><Projects /></Guard>} />
+            <Route path="projects/dashboard" element={<Guard allow={can('module.projects')}><ProjectDashboard /></Guard>} />
+            <Route path="projects/reporting" element={<Guard allow={can('module.projects')}><ProjectReporting /></Guard>} />
+            <Route path="projects/risks" element={<Guard allow={can('module.projects')}><RiskRegisterPage /></Guard>} />
+            <Route path="projects/configuration" element={<Guard allow={can('projects.manage')}><ProjectConfiguration /></Guard>} />
+            <Route path="projects/:id" element={<Guard allow={can('module.projects')}><ProjectDetail /></Guard>} />
+            <Route path="projects/:id/tasks" element={<Guard allow={can('module.projects')}><ProjectTasks /></Guard>} />
+            <Route path="tasks" element={<Guard allow={can('module.projects')}><AllTasks /></Guard>} />
+            <Route path="payslips" element={<Guard allow={can('module.payslips')}><MyPayslips /></Guard>} />
+            <Route path="my-card" element={<Guard allow={can('module.card')}><MyCard /></Guard>} />
+            <Route path="appraisals" element={<Guard allow={can('module.appraisals')}><Appraisals /></Guard>} />
+            <Route path="profile" element={<Profile />} />
+            <Route path="settings" element={<Settings />} />
+            <Route path="notifications" element={<Notifications />} />
+            <Route path="team" element={<Guard allow={isLead}><TeamApprovals /></Guard>} />
+            <Route path="reports" element={<Guard allow={can('reports.view')}><Reports /></Guard>} />
+            <Route path="hr/roles" element={<Guard allow={can('roles.manage')}><HrRoles /></Guard>} />
+            <Route path="hr/employees" element={<Guard allow={can('users.manage')}><Employees /></Guard>} />
+            <Route path="hr/contracts" element={<Guard allow={can('contracts.manage')}><Contracts /></Guard>} />
+            <Route path="hr/payroll" element={<Guard allow={can('payroll.manage')}><Payroll /></Guard>} />
+            <Route path="hr/requests" element={<Guard allow={can('profile.review')}><ChangeRequests /></Guard>} />
+            <Route path="hr/policies" element={<Guard allow={can('org.configure') || can('branding.manage')}><Policies /></Guard>} />
+            <Route path="hr/audit" element={<Guard allow={can('audit.view')}><Audit /></Guard>} />
+            <Route path="system" element={<Guard allow={isSuper}><Health /></Guard>} />
+            <Route path="system/companies" element={<Guard allow={isSuper}><Companies /></Guard>} />
+            <Route path="system/integrations" element={<Guard allow={isSuper}><Integrations /></Guard>} />
+            <Route path="system/settings" element={<Guard allow={isSuper}><SystemSettings /></Guard>} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </CallProvider>
     </LiveProvider>
   )
 }

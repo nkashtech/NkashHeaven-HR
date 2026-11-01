@@ -94,6 +94,7 @@ export default function Profile() {
       const { data: res } = await api.patch('/profile/me', { photoFileId: uploaded.id })
       setData({ profile: res.profile })
       refresh()
+      window.dispatchEvent(new Event('photo:changed'))
     } catch (err) {
       toast.error(errorMessage(err))
     }

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 import api, { company, loginPath, session } from '../services/api'
+import { disablePush } from '../services/push'
 import { setDateFormat } from '../utils/format'
 import { applyLanguage } from '../i18n'
 
@@ -66,6 +67,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   const logout = useCallback(async () => {
+    await disablePush().catch(() => {})
     await api.post('/auth/logout').catch(() => {})
     session.clear()
     setUser(null)

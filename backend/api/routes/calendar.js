@@ -143,13 +143,14 @@ router.get('/connections', h(async (req, res) => {
       pushLeave: Boolean(c?.pushLeave), accountEmail: c?.accountEmail || null, lastSyncAt: c?.lastSyncAt || null, lastError: c?.lastError || null,
     };
   };
-  res.json({ connections: [await view('GOOGLE'), await view('MICROSOFT')] });
+  res.json({ connections: [await view('GOOGLE')] });
 }));
 
 router.get('/connect/:provider', h(async (req, res) => {
   const provider = req.params.provider.toUpperCase();
   if (!['GOOGLE', 'MICROSOFT'].includes(provider)) throw new HttpError(400, 'Unknown provider');
-  const url = await calendar.authUrl(provider, req.user.id, { write: req.query.write === '1' });
+  // One connection covers the calendar and creating Meet links, so nobody is asked twice.
+  const url = await calendar.authUrl(provider, req.user.id, { write: req.query.write === '1', meetings: true });
   if (!url) throw new HttpError(503, 'This calendar is not set up yet. Ask the Super Admin to configure it under Integrations.');
   res.json({ url });
 }));

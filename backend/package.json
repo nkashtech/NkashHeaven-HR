@@ -40,7 +40,8 @@
     "pdfkit": "0.15.2",
     "prisma": "5.22.0",
     "qrcode": "1.5.4",
-    "socket.io": "4.8.1"
+    "socket.io": "4.8.1",
+    "web-push": "3.6.7"
   },
   "devDependencies": {
     "jest": "29.7.0",

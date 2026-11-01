@@ -1,3 +1,4 @@
+import toast from 'react-hot-toast'
 import { Suspense, useEffect, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -10,6 +11,7 @@ import { Avatar, ErrorBoundary, PageLoader } from './ui'
 import { useInterval } from './hooks'
 import { clock, fmtTime, ROLE_LABEL, roleShort } from '../utils/format'
 import api, { API_URL, company, session } from '../services/api'
+import { enablePush, pushSupported } from '../services/push'
 
 // Asked once per page load: the login screen needs it before anyone is signed in.
 const brandings = new Map()
@@ -221,6 +223,33 @@ function TopBar({ openMenu }) {
   )
 }
 
+// Browsers only allow the notification question after a click, so this asks for one.
+function CallAlerts() {
+  const [show, setShow] = useState(false)
+  useEffect(() => {
+    if (!pushSupported()) return
+    if (Notification.permission === 'granted') enablePush().catch(() => {})
+    else if (Notification.permission === 'default' && !localStorage.getItem('callAlertsDismissed')) {
+      // Stays hidden until the server can actually send alerts.
+      api.get('/push/key', { quiet: true }).then(({ data }) => setShow(Boolean(data.key))).catch(() => {})
+    }
+  }, [])
+  if (!show) return null
+  const dismiss = () => { localStorage.setItem('callAlertsDismissed', '1'); setShow(false) }
+  const turnOn = async () => {
+    setShow(false)
+    const done = await enablePush().catch(() => false)
+    if (done) toast.success('Calls will reach you when the app is closed')
+    else toast.error('Call alerts were not turned on')
+  }
+  return (
+    <div className="no-print mx-4 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-card px-3 py-2 text-[13px] sm:mx-6">
+      <span>Get incoming calls even when this app is closed.</span>
+      <span className="flex gap-2"><button className="btn-ghost btn-sm" onClick={dismiss}>Not now</button><button className="btn-primary btn-sm" onClick={turnOn}>Turn on</button></span>
+    </div>
+  )
+}
+
 function ViewAsBanner() {
   const { user } = useAuth()
   if (!user.impersonating) return null
@@ -244,6 +273,7 @@ export default function Layout() {
   return (
     <div className="flex h-full flex-col">
       <ViewAsBanner />
+      <CallAlerts />
       <div className="flex min-h-0 flex-1 gap-3 p-0 sm:p-3">
         <aside className="no-print hidden w-[232px] shrink-0 rounded-2xl bg-subtle/70 p-3 lg:block"><Sidebar /></aside>
         {menu && (

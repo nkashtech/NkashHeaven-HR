@@ -4,6 +4,7 @@ const { HttpError, h } = require('../middleware/validation');
 const { getSettings } = require('../../lib/settings');
 const { readFile } = require('../../lib/storage');
 const { runAs, asPlatform } = require('../../lib/tenant');
+const jwt = require('jsonwebtoken');
 const { sha256 } = require('../../lib/crypto');
 const meetings = require('../../lib/meetings');
 
@@ -41,6 +42,19 @@ router.post('/meeting-invite/:token', h(async (req, res) => withInvite(req.param
   await meetings.respond(invite, event, status, person.name);
   res.json(await inviteView({ ...invite, status }, event));
 })));
+
+// Decline on a call notification. The app may be closed, so the signed link stands in for a session.
+router.post('/call-decline/:token', h(async (req, res) => {
+  let payload;
+  try { payload = jwt.verify(req.params.token, process.env.JWT_SECRET); } catch { throw new HttpError(404, 'This call has ended'); }
+  if (payload.purpose !== 'call-decline') throw new HttpError(404, 'This call has ended');
+  const call = await asPlatform(async () => await prisma.call.findUnique({ where: { id: payload.callId } }));
+  if (!call) throw new HttpError(404, 'This call has ended');
+  await runAs(call.companyId, async () => {
+    if (!call.endedAt) await require('./chat').declineCall(call, payload.userId);
+  });
+  res.json({ ok: true });
+}));
 
 async function sendImage(res, id) {
   const file = id ? await prisma.fileObject.findUnique({ where: { id: Number(id) } }) : null;

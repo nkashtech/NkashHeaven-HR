@@ -870,6 +870,19 @@ model Message {
   @@index([conversationId, updatedAt])
 }
 
+// A browser or installed app that can be reached while it's closed.
+model PushSubscription {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  userId    Int
+  endpoint  String   @unique @db.VarChar(500)
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
 // A call inside a conversation. Audio and video go directly between browsers; these rows only introduce them.
 model Call {
   id             Int       @id @default(autoincrement())

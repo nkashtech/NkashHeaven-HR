@@ -149,6 +149,13 @@ function CompanyRoute() {
   return <Login />
 }
 
+// Someone arriving from a link, like a call notification, comes back to it after signing in.
+function SignInFirst() {
+  const { pathname, search } = useLocation()
+  const back = pathname === '/' ? '' : `?next=${encodeURIComponent(pathname + search)}`
+  return <Navigate to={`${company.slug ? `/c/${company.slug}/login` : '/login'}${back}`} replace />
+}
+
 export default function App() {
   const { user, loading } = useAuth()
   // Once signed in, the other pages download quietly so moving between them is instant.
@@ -167,7 +174,7 @@ export default function App() {
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
-        <Route path="*" element={user ? <Private /> : <Navigate to={company.slug ? `/c/${company.slug}/login` : '/login'} replace />} />
+        <Route path="*" element={user ? <Private /> : <SignInFirst />} />
       </Routes>
     </Suspense>
   )

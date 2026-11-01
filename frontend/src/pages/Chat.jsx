@@ -14,7 +14,7 @@ const presenceTone = { in: 'ok', leave: 'info', offline: 'neutral' }
 const presenceText = (p) => (p ? (p.dnd ? 'Do not disturb' : p.label) : '')
 const MAX_MB = Number(import.meta.env.VITE_MAX_UPLOAD_MB) || 20
 const fileSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`)
-const MEETINGS = { google: ['Google Meet', 'https://meet.google.com/new'], teams: ['Microsoft Teams', 'https://teams.microsoft.com/l/meeting/new'] }
+const MEETINGS = { google: ['Google Meet', 'https://meet.google.com/new'] }
 
 function Attachment({ file }) {
   const failed = (e) => toast.error(errorMessage(e))
@@ -71,7 +71,7 @@ function ForwardModal({ message, list, onClose }) {
   )
 }
 
-// Until Google or Microsoft is connected to the system, a meeting's real link is only visible on their site.
+// Until Google is connected to the system, a meeting's real link is only visible on their site.
 function ShareMeeting({ provider, conversationId, onClose }) {
   const [label, startUrl] = MEETINGS[provider]
   const [url, setUrl] = useState('')
@@ -230,6 +230,7 @@ export default function Chat() {
   const { data: list, reload: reloadList } = useFetch('/chat/conversations')
   const [activeId, setActiveId] = useState(params.get('c') ? Number(params.get('c')) : null)
   const joinOnOpen = useRef(params.get('join') === '1')
+  const answerOnOpen = useRef(params.get('answer') === '1' ? Number(params.get('call')) : null)
   const [info, setInfo] = useState(null)
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
@@ -284,7 +285,13 @@ export default function Chat() {
       joinOnOpen.current = false
       startCall(activeId, true)
     }
-  }, [activeId, startCall])
+    // Answer on a call notification.
+    if (answerOnOpen.current) {
+      const id = answerOnOpen.current
+      answerOnOpen.current = null
+      joinCall(id)
+    }
+  }, [activeId, startCall, joinCall])
 
   const refreshInfo = useCallback((id) => api.get(`/chat/conversations/${id}`).then((r) => { if (id === activeRef.current) setInfo(r.data) }).catch(() => {}), [])
 
@@ -425,7 +432,7 @@ export default function Chat() {
     setCallMenu(false)
     const tab = window.open('', '_blank')
     try {
-      const { data } = await api.post(`/chat/conversations/${activeId}/online-meeting`, { provider: provider === 'google' ? 'GOOGLE' : 'MICROSOFT' })
+      const { data } = await api.post(`/chat/conversations/${activeId}/online-meeting`, { provider: 'GOOGLE' })
       if (tab) tab.location.href = data.url
       else window.open(data.url, '_blank')
     } catch (err) {
@@ -481,7 +488,6 @@ export default function Chat() {
                     <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => placeCall(false)}><Phone size={14} />Voice call</button>
                     <div className="my-1 border-t border-line" />
                     <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => startMeeting('google')}><ExternalLink size={14} />Google Meet</button>
-                    <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => startMeeting('teams')}><ExternalLink size={14} />Microsoft Teams</button>
                   </div>
                 )}
               </div>

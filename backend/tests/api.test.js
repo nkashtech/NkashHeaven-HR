@@ -1,3 +1,5 @@
+jest.mock('web-push', () => ({ sendNotification: jest.fn(async () => ({})) }));
+const webpush = require('web-push');
 const request = require('supertest');
 const bcrypt = require('bcryptjs');
 const app = require('../api/index');
@@ -2033,5 +2035,53 @@ describe('online meetings and invitations', () => {
     const token = await tokenFor(res.body.id, ids.emp);
     expect((await as('lead').delete(`/calendar/meetings/${res.body.id}`)).status).toBe(200);
     expect((await request(app).get(`/api/public/meeting-invite/${token}`)).status).toBe(404);
+  });
+});
+
+describe('call alerts when the app is closed', () => {
+  const sub = (n) => ({ endpoint: `https://push.example/${n}`, keys: { p256dh: 'p', auth: 'a' } });
+  let conv;
+  beforeAll(async () => {
+    process.env.VAPID_PUBLIC_KEY = 'public';
+    process.env.VAPID_PRIVATE_KEY = 'private';
+    conv = (await as('hr').post('/chat/direct', { userId: ids.nosup })).body.conversationId;
+    await as('nosup').post('/push/subscribe', sub('nosup'));
+  });
+  afterAll(() => { delete process.env.VAPID_PUBLIC_KEY; delete process.env.VAPID_PRIVATE_KEY; });
+  beforeEach(() => webpush.sendNotification.mockClear());
+
+  const pushed = () => webpush.sendNotification.mock.calls.map((c) => JSON.parse(c[1]));
+
+  it('rings the other person and stops when the call ends', async () => {
+    const { call } = (await as('hr').post(`/chat/conversations/${conv}/calls`, {})).body;
+    const [ring] = pushed();
+    expect(ring).toMatchObject({ type: 'call', tag: `call-${call.id}`, url: `/chat?c=${conv}&call=${call.id}&answer=1` });
+    await as('hr').post(`/chat/calls/${call.id}/leave`);
+    expect(pushed().some((p) => p.type === 'call-ended' && p.tag === `call-${call.id}`)).toBe(true);
+  });
+
+  it('declines from the notification without a session, only with a real link', async () => {
+    const { call } = (await as('hr').post(`/chat/conversations/${conv}/calls`, {})).body;
+    const { declineUrl } = pushed()[0];
+    const token = declineUrl.split('/call-decline/')[1];
+    expect((await request(app).post('/api/public/call-decline/forged')).status).toBe(404);
+    expect((await request(app).post(`/api/public/call-decline/${token}`)).status).toBe(200);
+    expect((await as('hr').get(`/chat/calls/${call.id}`)).body.call.endedAt).toBeTruthy();
+  });
+
+  it('a browser belongs to whoever signed in last, and dead ones are dropped', async () => {
+    await as('emp').post('/push/subscribe', sub('shared'));
+    await as('hr').post('/push/subscribe', sub('shared'));
+    const rows = await asPlatform(async () => await prisma.pushSubscription.findMany({ where: { endpoint: sub('shared').endpoint } }));
+    expect(rows.map((r) => r.userId)).toEqual([ids.hr]);
+    expect((await as('hr').post('/push/subscribe', { endpoint: 'http://bad', keys: {} })).status).toBe(400);
+    webpush.sendNotification.mockRejectedValueOnce(Object.assign(new Error('gone'), { statusCode: 410 }));
+    const { call } = (await as('hr').post(`/chat/conversations/${conv}/calls`, {})).body;
+    expect(await asPlatform(async () => await prisma.pushSubscription.count({ where: { userId: ids.nosup } }))).toBe(0);
+    await as('hr').post(`/chat/calls/${call.id}/leave`);
+  });
+
+  it('only offers Google as a calendar connection', async () => {
+    expect((await as('hr').get('/calendar/connections')).body.connections.map((c) => c.provider)).toEqual(['GOOGLE']);
   });
 });

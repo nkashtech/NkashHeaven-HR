@@ -13,7 +13,7 @@ const START_HOUR = 7
 const END_HOUR = 19
 const HOUR_PX = 48
 const SOURCES = [
-  ['google', 'Google meetings', '#2F62E3'], ['microsoft', 'Outlook meetings', '#7C3AED'], ['leave', 'Leave, holidays, birthdays', '#E2744A'], ['company', 'Company events', '#3D9A8B'],
+  ['google', 'Google meetings', '#2F62E3'], ['leave', 'Leave, holidays, birthdays', '#E2744A'], ['company', 'Company events', '#3D9A8B'],
 ]
 const groupOf = (s) => (['leave', 'teamleave', 'holiday', 'birthday'].includes(s) ? 'leave' : s)
 
@@ -49,7 +49,7 @@ function Connections() {
           <div><div className="text-[13px] font-semibold">Company calendar</div><div className="text-[11px] text-ink-muted">Leave, holidays, birthdays, trainings</div></div>
         </div>
       </div>
-      <p className="mt-3 text-[11px] text-ink-muted">Read-only access. We sync every 5 minutes and when your calendar tells us something changed. Private events show as "Busy" to your team.</p>
+      <p className="mt-3 text-[11px] text-ink-muted">We read your calendar and only add meetings you create here. We sync every 5 minutes and when your calendar tells us something changed. Private events show as "Busy" to your team.</p>
     </Card>
   )
 }
@@ -68,7 +68,7 @@ function NewMeeting({ day, onClose, onSaved }) {
       toast.success('Meeting created and invites sent')
       onSaved()
     } catch (err) {
-      // Meet and Teams need the person's account linked once. Coming back, they press Create again.
+      // Meet needs the person's account linked once. Coming back, they press Create again.
       if (err.response?.data?.code === 'CONNECT_NEEDED') setConnect(err.response.data.url)
       else toast.error(errorMessage(err))
     }
@@ -87,7 +87,6 @@ function NewMeeting({ day, onClose, onSaved }) {
           <select className="input" value={form.meetingType} onChange={(e) => { setForm({ ...form, meetingType: e.target.value }); setConnect(null) }}>
             <option value="APP">In-app call (up to 6 people)</option>
             <option value="GOOGLE">Google Meet</option>
-            <option value="TEAMS">Microsoft Teams</option>
             <option value="LINK">Another meeting link</option>
             <option value="NONE">In person</option>
           </select>

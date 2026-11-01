@@ -140,7 +140,7 @@ function CalendarTab() {
   }
   return (
     <Card title="Calendar & integrations">
-      <p className="mb-3 text-[13px] text-ink-soft">Connect your Google or Microsoft account the same way a phone calendar does. Access is read-only and your password is never stored here.</p>
+      <p className="mb-3 text-[13px] text-ink-soft">Connect your Google account the same way a phone calendar does. The app reads your calendar, only adds meetings you create here, and your password is never stored here.</p>
       <div className="divide-y divide-line">
         {data?.connections.map((c) => (
           <div key={c.provider} className="flex flex-wrap items-center justify-between gap-2 py-3">

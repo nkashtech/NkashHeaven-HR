@@ -75,7 +75,6 @@ export default function SetupWizard() {
         <div className="space-y-3">
           <p className="text-[13px] text-ink-soft">See your meetings next to your shifts and leave. Read-only access, and you can disconnect at any time.</p>
           <button className="btn-outline w-full" onClick={() => connect('google')}>Connect Google Calendar</button>
-          <button className="btn-outline w-full" onClick={() => connect('microsoft')}>Connect Outlook / Microsoft 365</button>
           <button className="btn-primary w-full" onClick={finish}>Finish</button>
         </div>
       )}

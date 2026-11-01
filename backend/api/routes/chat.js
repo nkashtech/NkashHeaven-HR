@@ -1,10 +1,12 @@
 const express = require('express');
+const jwt = require('jsonwebtoken');
 const prisma = require('../../lib/prisma');
 const { authenticate, requirePerm } = require('../middleware/auth');
 const { HttpError, h, required, intParam } = require('../middleware/validation');
 const { can } = require('../../lib/permissions');
 const { audit } = require('../../lib/audit');
 const calendar = require('../../lib/calendar');
+const { sendPush } = require('../../lib/push');
 const { emitToUsers } = require('../../lib/realtime');
 const { getSettings } = require('../../lib/settings');
 const chat = require('../../lib/chat');
@@ -282,6 +284,9 @@ async function endCall(call) {
   const { count } = await prisma.call.updateMany({ where: { id: call.id, endedAt: null }, data: { endedAt: new Date() } });
   if (!count) return;
   await prisma.callSignal.deleteMany({ where: { callId: call.id } });
+  // Stops the ringing on anyone who never picked up.
+  const ringing = (await chat.memberIds(call.conversationId)).filter((u) => u !== call.startedById);
+  await sendPush(ringing, () => ({ type: 'call-ended', tag: `call-${call.id}` }));
   const answered = await prisma.callMember.count({ where: { callId: call.id, joinedAt: { not: null }, userId: { not: call.startedById } } });
   const minutes = Math.max(1, Math.round((Date.now() - call.startedAt.getTime()) / 60000));
   // The "Join call" link has nothing to join any more.
@@ -323,7 +328,13 @@ router.post('/conversations/:id/calls', h(async (req, res) => {
   const now = new Date();
   const call = await prisma.call.create({ data: { conversationId: id, startedById: req.user.id, video: req.body.video !== false, members: { create: { userId: req.user.id, joinedAt: now, lastSeenAt: now } } } });
   await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} started a ${call.video ? 'video' : 'voice'} call`, link: `/chat?c=${id}&call=${call.id}`, receiverOnly: true });
-  emitToUsers((await chat.memberIds(id)).filter((u) => u !== req.user.id), 'call:ring', { ...callView(call), callerName: req.user.name, conversationName: conv.name });
+  const others = (await chat.memberIds(id)).filter((u) => u !== req.user.id);
+  emitToUsers(others, 'call:ring', { ...callView(call), callerName: req.user.name, conversationName: conv.name });
+  // Rings a closed tab or app too. Declining from the notification has no session, so each person's link says who they are.
+  await sendPush(others, (userId) => ({
+    type: 'call', tag: `call-${call.id}`, title: `${req.user.name} is calling`, body: `${call.video ? 'Video' : 'Voice'} call${conv.name ? ` in #${conv.name}` : ''}`,
+    url: `/chat?c=${id}&call=${call.id}&answer=1`, declineUrl: `${process.env.API_URL || ''}/api/public/call-decline/${jwt.sign({ purpose: 'call-decline', userId, callId: call.id }, process.env.JWT_SECRET, { expiresIn: '2m' })}`,
+  }));
   return res.status(201).json({ call: callView(call), joined: true });
 }));
 
@@ -364,9 +375,7 @@ async function closeIfDirect(call) {
 
 router.post('/calls/:id/decline', h(async (req, res) => {
   const call = await loadCall(req);
-  const now = new Date();
-  await prisma.callMember.upsert({ where: { callId_userId: { callId: call.id, userId: req.user.id } }, create: { callId: call.id, userId: req.user.id, declinedAt: now }, update: { declinedAt: now } });
-  await closeIfDirect(call);
+  await router.declineCall(call, req.user.id);
   res.json({ ok: true });
 }));
 
@@ -391,5 +400,11 @@ router.post('/conversations/:id/export', requirePerm('chat.export'), h(async (re
   res.setHeader('Content-Disposition', `attachment; filename="conversation-${id}.txt"`);
   res.send(`Exported by ${req.user.name}\nReason: ${req.body.reason}\n\n${text}\n`);
 }));
+
+router.declineCall = async (call, userId) => {
+  const now = new Date();
+  await prisma.callMember.upsert({ where: { callId_userId: { callId: call.id, userId } }, create: { callId: call.id, userId, declinedAt: now }, update: { declinedAt: now } });
+  await closeIfDirect(call);
+};
 
 module.exports = router;

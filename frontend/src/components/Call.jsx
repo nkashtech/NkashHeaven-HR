@@ -56,7 +56,7 @@ function CallRoom({ user, local, peers, status, muted, cameraOff, sharing, canSh
         {peers.map((p) => <Tile key={p.id} name={p.name} stream={p.stream} state={p.state} />)}
         {!peers.length && <div className="flex items-center justify-center text-white/60">{status}</div>}
       </div>
-      {failed && <p className="mt-2 text-center text-xs text-amber-300">Your networks would not allow a direct connection. Try another network, or share a Google Meet or Teams link in the chat.</p>}
+      {failed && <p className="mt-2 text-center text-xs text-amber-300">Your networks would not allow a direct connection. Try another network, or use Google Meet from the chat.</p>}
       <div className="absolute bottom-24 right-6 w-40 md:w-56"><Tile name={user.name} stream={local} muted /></div>
       <div className="mt-3 flex items-center justify-center gap-3">
         <button className={round} onClick={onMute} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={20} /> : <Mic size={20} />}</button>

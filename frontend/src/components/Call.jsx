@@ -50,14 +50,14 @@ function CallRoom({ user, local, peers, status, muted, cameraOff, sharing, canSh
   const round = 'flex h-12 w-12 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20'
   const failed = peers.some((p) => p.state === 'failed')
   return (
-    <div className="fixed inset-0 z-[60] flex flex-col bg-zinc-950 p-4" role="dialog" aria-label="Call">
+    <div className="fixed inset-0 z-[60] flex flex-col bg-zinc-950 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]" role="dialog" aria-label="Call">
       <div className="mb-3 text-center text-[13px] font-semibold text-white/80">{status}</div>
       <div className={`grid min-h-0 flex-1 gap-3 ${peers.length > 1 ? 'md:grid-cols-2' : ''}`}>
         {peers.map((p) => <Tile key={p.id} name={p.name} stream={p.stream} state={p.state} />)}
         {!peers.length && <div className="flex items-center justify-center text-white/60">{status}</div>}
       </div>
       {failed && <p className="mt-2 text-center text-xs text-amber-300">Your networks would not allow a direct connection. Try another network, or use Google Meet from the chat.</p>}
-      <div className="absolute bottom-24 right-6 w-40 md:w-56"><Tile name={user.name} stream={local} muted /></div>
+      <div className="absolute bottom-24 right-4 w-28 md:right-6 md:w-56"><Tile name={user.name} stream={local} muted /></div>
       <div className="mt-3 flex items-center justify-center gap-3">
         <button className={round} onClick={onMute} aria-label={muted ? 'Unmute' : 'Mute'}>{muted ? <MicOff size={20} /> : <Mic size={20} />}</button>
         {canShare && <button className={round} onClick={onCamera} aria-label={cameraOff ? 'Turn camera on' : 'Turn camera off'}>{cameraOff ? <VideoOff size={20} /> : <Video size={20} />}</button>}
@@ -86,7 +86,7 @@ function Incoming({ ring, onAccept, onDecline }) {
     return () => { clearInterval(id); ctx.close() }
   }, [])
   return (
-    <div className="fixed right-4 top-4 z-[60] w-80 rounded-2xl border border-line bg-card p-4 shadow-pop" role="alertdialog" aria-label="Incoming call">
+    <div className="fixed inset-x-4 top-4 z-[60] rounded-2xl sm:left-auto sm:w-80 border border-line bg-card p-4 shadow-pop" role="alertdialog" aria-label="Incoming call">
       <div className="flex items-center gap-3">
         <Avatar name={ring.callerName} size={44} />
         <div className="min-w-0">

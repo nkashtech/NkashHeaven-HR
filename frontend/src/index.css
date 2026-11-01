@@ -42,6 +42,31 @@ body { background: rgb(var(--shell)); color: rgb(var(--ink)); font-family: Inter
 /* Grid and flex children may shrink below their content, so wide tables scroll inside their card instead of pushing the page sideways. */
 .grid > * { min-width: 0; }
 
+/* Phones. iPhones zoom the page into any box with text under 16px, and fingers need bigger targets than a mouse. */
+@media (max-width: 767px) {
+  .input, select.input, textarea.input { font-size: 16px; min-height: 44px; }
+  .btn { min-height: 44px; }
+  .btn.btn-sm { min-height: 38px; }
+  .btn.\!p-2, .btn.\!p-1\.5, .btn.\!p-2\.5 { min-width: 44px; }
+  input[type='checkbox'] { width: 20px; height: 20px; }
+}
+
+/* Under 640px a table reads as a stack of cards, each value beside its column name. Table in ui.jsx supplies the names. */
+@media (max-width: 639px) {
+  .table-cards { border: 0; background: transparent; overflow: visible; }
+  .table-cards table, .table-cards tbody { display: block; width: 100%; }
+  .table-cards thead { display: none; }
+  .table-cards tbody { border: 0; }
+  .table-cards tbody > tr { display: block; margin-bottom: 10px; padding: 6px 14px; border: 1px solid rgb(var(--line)); border-radius: 14px; background: rgb(var(--card)); }
+  .table-cards tbody > tr > td { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 8px 0; text-align: right; white-space: normal; min-width: 0; }
+  .table-cards tbody > tr > td + td { border-top: 1px solid rgb(var(--line) / 0.6); }
+  .table-cards tbody > tr > td[data-label]::before { content: attr(data-label); flex-shrink: 0; max-width: 45%; font-size: 12px; font-weight: 500; color: rgb(var(--ink-soft, 113 113 122)); text-align: left; }
+  .table-cards tbody > tr > td[data-empty] { display: none; }
+  .table-cards tbody > tr > td:not([data-label]) { justify-content: flex-start; text-align: left; }
+  .table-cards tfoot { display: block; }
+  .table-cards tfoot tr { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 14px; }
+}
+
 /* Set by services/busy.js while a button's API call is running. The label stays in place so the button keeps its size. */
 button[data-busy] { position: relative; color: transparent !important; pointer-events: none; }
 button[data-busy] > * { visibility: hidden; }

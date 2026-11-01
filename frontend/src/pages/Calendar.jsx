@@ -275,7 +275,8 @@ function Agenda({ events, onOpen }) {
 
 export default function Calendar() {
   const today = companyToday()
-  const [view, setView] = useState('week')
+  // A week doesn't fit a phone, so phones open on the list of what's coming up.
+  const [view, setView] = useState(window.innerWidth < 768 ? 'agenda' : 'week')
   const [anchor, setAnchor] = useState(today)
   const [hidden, setHidden] = useState([])
   const [open, setOpen] = useState(null)
@@ -307,7 +308,7 @@ export default function Calendar() {
     <>
       <PageHeader title="Calendar" subtitle="Your meetings, leave, holidays and birthdays in one view" />
       <div className="grid gap-4 xl:grid-cols-[270px_1fr]">
-        <div className="space-y-4">
+        <div className="order-2 space-y-4 xl:order-1">
           <Connections />
           <Card title="Show">
             <div className="space-y-2">
@@ -329,7 +330,7 @@ export default function Calendar() {
             </Card>
           )}
         </div>
-        <div className="min-w-0">
+        <div className="order-1 min-w-0 xl:order-2">
           <div className="mb-3 flex flex-wrap items-center gap-2">
             <button className="btn-outline" onClick={() => setAnchor(today)}>Today</button>
             <button className="btn-outline !p-2" onClick={() => move(-1)} aria-label="Previous"><ChevronLeft size={16} /></button>

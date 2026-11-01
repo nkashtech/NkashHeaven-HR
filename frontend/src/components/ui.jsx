@@ -1,4 +1,4 @@
-import { Component, useEffect, useState, useSyncExternalStore } from 'react'
+import { Component, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Loader2, X } from 'lucide-react'
 import { initials } from '../utils/format'
@@ -154,8 +154,8 @@ export function Modal({ title, onClose, children, wide }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start sm:items-center justify-center p-4 overflow-y-auto" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div role="dialog" aria-modal="true" aria-label={title} className={`bg-card rounded-2xl shadow-pop w-full ${wide ? 'max-w-2xl' : 'max-w-md'} animate-fade-up`}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4 overflow-y-auto" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div role="dialog" aria-modal="true" aria-label={title} className={`bg-card rounded-t-2xl sm:rounded-2xl shadow-pop w-full ${wide ? 'sm:max-w-2xl' : 'sm:max-w-md'} max-h-[92dvh] overflow-y-auto pb-[env(safe-area-inset-bottom)] animate-fade-up`}>
         <div className="flex items-center justify-between px-5 pt-4 pb-3 border-b border-line">
           <h3 className="font-bold text-[15px]">{title}</h3>
           <button className="btn-ghost !p-1.5" onClick={onClose} aria-label="Close"><X size={16} /></button>
@@ -217,6 +217,21 @@ export function Field({ label, children, hint }) {
   )
 }
 
+// On a phone the rows become cards (see index.css). Each cell is labelled with its column, so every table gets this as it stands.
 export function Table({ children, className = '' }) {
-  return <div className={`border border-line rounded-xl2 overflow-x-auto bg-card ${className}`}><table className="w-full">{children}</table></div>
+  const box = useRef(null)
+  useEffect(() => {
+    const table = box.current?.querySelector('table')
+    if (!table) return
+    const names = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim())
+    table.querySelectorAll('tbody tr').forEach((row) => {
+      [...row.children].forEach((cell, i) => {
+        if (names[i] && cell.colSpan === 1) cell.dataset.label = names[i]
+        else delete cell.dataset.label
+        if (cell.colSpan === 1 && !cell.textContent.trim() && !cell.querySelector('input, select, button, img, svg')) cell.dataset.empty = 'true'
+        else delete cell.dataset.empty
+      })
+    })
+  })
+  return <div ref={box} className={`table-cards border border-line rounded-xl2 overflow-x-auto bg-card ${className}`}><table className="w-full">{children}</table></div>
 }

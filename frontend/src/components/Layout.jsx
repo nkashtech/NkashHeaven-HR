@@ -210,7 +210,7 @@ function TopBar({ openMenu }) {
   const Dot = ({ n }) => (n > 0 ? <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-brand ring-2 ring-panel" /> : null)
   return (
     <div className="no-print flex items-center justify-between gap-2 px-4 pt-4 sm:px-6">
-      <button className="btn-outline !p-2 lg:hidden" onClick={openMenu} aria-label="Open menu"><Menu size={18} /></button>
+      <button className="btn-outline !p-2 hidden md:inline-flex lg:hidden" onClick={openMenu} aria-label="Open menu"><Menu size={18} /></button>
       <div className="ml-auto flex items-center gap-2">
         {can('module.attendance') && !user.isOwner && <PunchChip />}
         <ThemeToggle />
@@ -250,6 +250,30 @@ function CallAlerts() {
   )
 }
 
+// Thumb reach on phones: the screens used daily, plus the full menu.
+function BottomBar({ openMenu }) {
+  const { can, user } = useAuth()
+  const { unreadChat } = useLive()
+  const tab = 'relative flex min-w-0 flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium'
+  const links = [
+    { to: '/', icon: Home, label: 'Home' },
+    can('module.attendance') && !user.isOwner && { to: '/attendance', icon: Clock, label: 'Attendance' },
+    can('module.leave') && { to: '/leave', icon: Plane, label: 'Leave' },
+    can('module.chat') && user.flags?.chat !== false && { to: '/chat', icon: MessageSquare, label: 'Chat', badge: unreadChat },
+  ].filter(Boolean)
+  return (
+    <nav aria-label="Main" className="no-print flex shrink-0 border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden">
+      {links.map(({ to, icon: Icon, label, badge }) => (
+        <NavLink key={to} to={to} end={to === '/'} className={({ isActive }) => `${tab} ${isActive ? 'text-brand-ink' : 'text-ink-soft'}`}>
+          <Icon size={20} />{label}
+          {badge > 0 && <span className="absolute right-1/4 top-1.5 h-2.5 w-2.5 rounded-full bg-brand ring-2 ring-panel" />}
+        </NavLink>
+      ))}
+      <button className={`${tab} text-ink-soft`} onClick={openMenu}><Menu size={20} />More</button>
+    </nav>
+  )
+}
+
 function ViewAsBanner() {
   const { user } = useAuth()
   if (!user.impersonating) return null
@@ -271,14 +295,14 @@ export default function Layout() {
   const { pathname } = useLocation()
   useEffect(() => { document.querySelector('main')?.scrollTo(0, 0) }, [pathname])
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-dvh flex-col pt-[env(safe-area-inset-top)]">
       <ViewAsBanner />
       <CallAlerts />
       <div className="flex min-h-0 flex-1 gap-3 p-0 sm:p-3">
         <aside className="no-print hidden w-[232px] shrink-0 rounded-2xl bg-subtle/70 p-3 lg:block"><Sidebar /></aside>
         {menu && (
           <div className="fixed inset-0 z-40 bg-black/40 lg:hidden" onClick={() => setMenu(false)}>
-            <div className="h-full w-[264px] bg-panel p-3" onClick={(e) => e.stopPropagation()}>
+            <div className="h-full w-[264px] overflow-y-auto bg-panel p-3 pt-[max(0.75rem,env(safe-area-inset-top))]" onClick={(e) => e.stopPropagation()}>
               <button className="btn-ghost absolute left-[220px] top-4 !p-1.5" onClick={() => setMenu(false)} aria-label="Close menu"><X size={16} /></button>
               <Sidebar close={() => setMenu(false)} />
             </div>
@@ -286,9 +310,10 @@ export default function Layout() {
         )}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-panel sm:rounded-2xl">
           <TopBar openMenu={() => setMenu(true)} />
-          <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 pt-2 sm:px-6">
+          <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 pt-2 sm:px-6 md:pb-8">
             <div className="mx-auto max-w-[1240px] animate-fade-up"><ErrorBoundary key={pathname}><Suspense fallback={<PageLoader />}><Outlet /></Suspense></ErrorBoundary></div>
           </main>
+          <BottomBar openMenu={() => setMenu(true)} />
         </div>
       </div>
     </div>

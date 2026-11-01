@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { Download, ExternalLink, FileText, Forward, Hash, Paperclip, Pencil, Phone, Pin, PinOff, Plus, Quote, Search, Send, Trash2, Video, X } from 'lucide-react'
+import { ArrowLeft, Download, ExternalLink, FileText, Forward, Hash, Info, Paperclip, Pencil, Phone, Pin, PinOff, Plus, Quote, Search, Send, Trash2, Video, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { useLive } from '../contexts/LiveContext'
@@ -182,11 +182,13 @@ function SearchPanel({ onClose, onOpen, conversationId }) {
 }
 
 function Message({ m, mine, onEdit, onDelete, onPin, onQuote, onForward, onJoin, onJump }) {
+  // Phones have no hover, so tapping a message shows its actions.
+  const [tapped, setTapped] = useState(false)
   const editable = mine && !m.deleted && Date.now() - new Date(m.createdAt) < 15 * 60000
   const callId = m.link?.match(/[?&]call=(\d+)/)?.[1]
-  const action = 'rounded p-1 text-ink-muted hover:bg-subtle'
+  const action = 'rounded p-2 text-ink-muted hover:bg-subtle md:p-1'
   return (
-    <div id={m.id ? `message-${m.id}` : undefined} className="group flex gap-2.5">
+    <div id={m.id ? `message-${m.id}` : undefined} className="group flex flex-wrap gap-2.5 md:flex-nowrap" onClick={(e) => { if (!e.target.closest('a, button')) setTapped(!tapped) }}>
       <Avatar name={m.senderName} size={32} />
       <div className="min-w-0 max-w-[75%]">
         <div className="text-[11px] text-ink-muted">
@@ -210,7 +212,7 @@ function Message({ m, mine, onEdit, onDelete, onPin, onQuote, onForward, onJoin,
         </div>
       </div>
       {!m.deleted && !m.sending && m.id && (
-        <div className="invisible flex items-center gap-1 self-center group-hover:visible">
+        <div className={`${tapped ? 'flex' : 'hidden'} w-full items-center gap-3 pl-[42px] md:visible md:flex md:w-auto md:gap-1 md:self-center md:pl-0 md:[&:not(:hover)]:opacity-100 ${tapped ? '' : 'md:invisible md:group-hover:visible'}`}>
           {m.senderId !== null && <button className={action} onClick={() => onQuote(m)} aria-label="Quote message" title="Quote"><Quote size={13} /></button>}
           {m.senderId !== null && <button className={action} onClick={() => onForward(m)} aria-label="Forward message" title="Forward"><Forward size={13} /></button>}
           {m.senderId !== null && <button className={`${action} ${m.pinned ? '!text-brand-ink' : ''}`} onClick={() => onPin(m)} aria-label={m.pinned ? 'Unpin message' : 'Pin message'} title={m.pinned ? 'Unpin' : 'Pin'}>{m.pinned ? <PinOff size={13} /> : <Pin size={13} />}</button>}
@@ -240,6 +242,9 @@ export default function Chat() {
   const [quoting, setQuoting] = useState(null)
   const [forwarding, setForwarding] = useState(null)
   const [callMenu, setCallMenu] = useState(false)
+  // On a phone only one of the list and the conversation fits.
+  const [showList, setShowList] = useState(!params.get('c'))
+  const [details, setDetails] = useState(false)
   const [meeting, setMeeting] = useState(null)
   const [newChat, setNewChat] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -456,30 +461,55 @@ export default function Chat() {
 
   const conv = info?.conversation
   const today = companyToday()
-  const open = (id) => { setNewChat(false); setSearching(false); setActiveId(id) }
+  const open = (id) => { setNewChat(false); setSearching(false); setActiveId(id); setShowList(false) }
   const title = conv?.type === 'CHANNEL' ? `# ${conv.name}` : [...(list?.direct || [])].find((c) => c.id === activeId)?.name || conv?.name
   let lastDay = null
+  const detailsPanel = (
+    <>
+      <h3 className="text-[13px] font-bold">Members</h3>
+      <div className="mt-2 space-y-2">
+        {info?.members.slice(0, 40).map((m) => (
+          <div key={m.id} className="flex items-center justify-between gap-2 text-[13px]">
+            <span className="flex min-w-0 items-center gap-1.5"><Avatar name={m.name} size={22} /><span className="truncate">{m.name}</span></span>
+            <Pill tone={m.presence?.dnd ? 'bad' : presenceTone[m.presence?.status]}>{m.presence?.dnd ? 'DND' : { in: 'Checked in', leave: 'On leave', offline: 'Offline' }[m.presence?.status]}</Pill>
+          </div>
+        ))}
+      </div>
+      <h3 className="mt-4 text-[13px] font-bold">Pinned</h3>
+      <div className="mt-1 space-y-1">
+        {!info?.pins.length && <p className="text-xs text-ink-muted">Nothing pinned.</p>}
+        {info?.pins.map((p) => (
+          <div key={p.id} className="flex items-start gap-1 rounded-lg px-1 py-1 text-xs hover:bg-subtle">
+            <Pin size={12} className="mt-0.5 shrink-0 text-brand-ink" />
+            <button type="button" className="min-w-0 flex-1 text-left" onClick={() => jump(p.id)}><span className="block font-semibold">{p.senderName}</span><span className="line-clamp-2 text-ink-soft">{p.attachment?.name || p.body}</span></button>
+            <button type="button" className="shrink-0 text-ink-muted" onClick={() => act(pin)(p)} aria-label="Unpin message"><X size={12} /></button>
+          </div>
+        ))}
+      </div>
+    </>
+  )
   return (
     <>
-      <PageHeader title="Chat" subtitle="Team channels and direct messages · presence follows check-in status" />
-      <div className="grid h-[calc(100vh-170px)] min-h-[480px] overflow-hidden rounded-xl2 border border-line lg:grid-cols-[260px_1fr_220px]">
-        <aside className="hidden flex-col gap-2 overflow-y-auto bg-subtle/60 p-3 md:flex">
+      <div className="hidden md:block"><PageHeader title="Chat" subtitle="Team channels and direct messages · presence follows check-in status" /></div>
+      <div className="grid h-[calc(100dvh-150px)] min-h-[380px] overflow-hidden rounded-xl2 border border-line md:h-[calc(100vh-170px)] md:min-h-[480px] md:grid-cols-[240px_1fr] lg:grid-cols-[260px_1fr_220px]">
+        <aside className={`${showList ? 'flex' : 'hidden'} flex-col gap-2 overflow-y-auto bg-subtle/60 p-3 md:flex`}>
           <button className="btn-outline w-full justify-start" onClick={() => setSearching(true)}><Search size={14} />Search people or messages</button>
           <div className="eyebrow mt-2 px-1">Channels</div>
-          {list?.channels.map((c) => <Row key={c.id} c={c} active={c.id === activeId} onClick={() => setActiveId(c.id)} />)}
+          {list?.channels.map((c) => <Row key={c.id} c={c} active={c.id === activeId} onClick={() => open(c.id)} />)}
           <div className="eyebrow mt-2 px-1">Direct messages</div>
-          {list?.direct.map((c) => <Row key={c.id} c={c} active={c.id === activeId} onClick={() => setActiveId(c.id)} />)}
+          {list?.direct.map((c) => <Row key={c.id} c={c} active={c.id === activeId} onClick={() => open(c.id)} />)}
           <button className="btn-outline mt-1 w-full" onClick={() => setNewChat(true)}><Plus size={14} />New message</button>
         </aside>
 
-        <section className={`flex min-h-0 min-w-0 flex-col bg-card ${dragging ? 'ring-2 ring-inset ring-brand' : ''}`} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false) }} onDrop={dropFiles}>
-          <header className="flex items-center justify-between gap-2 border-b border-line px-4 py-2.5">
-            <div className="min-w-0">
+        <section className={`${showList ? 'hidden' : 'flex'} min-h-0 min-w-0 flex-col bg-card md:flex ${dragging ? 'ring-2 ring-inset ring-brand' : ''}`} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false) }} onDrop={dropFiles}>
+          <header className="flex items-center justify-between gap-2 border-b border-line px-3 py-2.5 md:px-4">
+            <button className="btn-ghost !p-2 md:hidden" onClick={() => setShowList(true)} aria-label="Back to conversations"><ArrowLeft size={18} /></button>
+            <div className="min-w-0 flex-1">
               <div className="truncate text-[15px] font-bold">{title || '…'}</div>
               <div className="text-xs text-ink-muted">{info?.members.length} member{info?.members.length === 1 ? '' : 's'}{conv?.department ? ` · ${conv.department} department` : ''}</div>
             </div>
             <div className="flex shrink-0 gap-1.5">
-              <button className="btn-outline !p-2 md:hidden" onClick={() => setNewChat(true)} aria-label="New message"><Plus size={15} /></button>
+              <button className="btn-outline !p-2 lg:hidden" onClick={() => setDetails(true)} aria-label="Members and pinned messages"><Info size={15} /></button>
               <div className="relative">
                 <button className="btn-outline !p-2" onClick={() => setCallMenu(!callMenu)} aria-label="Start a call" aria-expanded={callMenu} disabled={!conv || conv.type === 'BOT'}><Video size={15} /></button>
                 {callMenu && (
@@ -491,8 +521,8 @@ export default function Chat() {
                   </div>
                 )}
               </div>
-              <button className="btn-outline !p-2" onClick={() => setSearching(true)} aria-label="Search"><Search size={15} /></button>
-              {conv?.canExport && <button className="btn-outline !p-2" onClick={() => setExporting(true)} aria-label="Export conversation"><Download size={15} /></button>}
+              <button className="btn-outline !p-2 hidden sm:inline-flex" onClick={() => setSearching(true)} aria-label="Search"><Search size={15} /></button>
+              {conv?.canExport && <button className="btn-outline !p-2 hidden sm:inline-flex" onClick={() => setExporting(true)} aria-label="Export conversation"><Download size={15} /></button>}
             </div>
           </header>
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
@@ -547,29 +577,11 @@ export default function Chat() {
         </section>
 
         <aside className="hidden flex-col overflow-y-auto border-l border-line bg-card p-4 lg:flex">
-          <h3 className="text-[13px] font-bold">Members</h3>
-          <div className="mt-2 space-y-2">
-            {info?.members.slice(0, 40).map((m) => (
-              <div key={m.id} className="flex items-center justify-between gap-2 text-[13px]">
-                <span className="flex min-w-0 items-center gap-1.5"><Avatar name={m.name} size={22} /><span className="truncate">{m.name}</span></span>
-                <Pill tone={m.presence?.dnd ? 'bad' : presenceTone[m.presence?.status]}>{m.presence?.dnd ? 'DND' : { in: 'Checked in', leave: 'On leave', offline: 'Offline' }[m.presence?.status]}</Pill>
-              </div>
-            ))}
-          </div>
-          <h3 className="mt-4 text-[13px] font-bold">Pinned</h3>
-          <div className="mt-1 space-y-1">
-            {!info?.pins.length && <p className="text-xs text-ink-muted">Nothing pinned.</p>}
-            {info?.pins.map((p) => (
-              <div key={p.id} className="flex items-start gap-1 rounded-lg px-1 py-1 text-xs hover:bg-subtle">
-                <Pin size={12} className="mt-0.5 shrink-0 text-brand-ink" />
-                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => jump(p.id)}><span className="block font-semibold">{p.senderName}</span><span className="line-clamp-2 text-ink-soft">{p.attachment?.name || p.body}</span></button>
-                <button type="button" className="shrink-0 text-ink-muted" onClick={() => act(pin)(p)} aria-label="Unpin message"><X size={12} /></button>
-              </div>
-            ))}
-          </div>
+          {detailsPanel}
           <p className="mt-auto rounded-lg bg-subtle p-2.5 text-[11px] text-ink-muted">Messages follow the company chat policy. #announcements is read-only for staff; HR and managers can post.</p>
         </aside>
       </div>
+      {details && <Modal title="Conversation details" onClose={() => setDetails(false)}>{detailsPanel}<button className="btn-outline mt-4 w-full" onClick={() => { setDetails(false); setSearching(true) }}><Search size={14} />Search messages</button></Modal>}
       {newChat && <NewChat onClose={() => setNewChat(false)} onOpen={open} />}
       {searching && <SearchPanel onClose={() => setSearching(false)} onOpen={open} conversationId={activeId} />}
       {forwarding && list && <ForwardModal message={forwarding} list={list} onClose={() => setForwarding(null)} />}

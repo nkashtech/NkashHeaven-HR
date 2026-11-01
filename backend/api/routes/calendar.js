@@ -12,11 +12,16 @@ const { isConfigured } = require('../../lib/integrations');
 const { clientUrl } = require('../../lib/email');
 const { asPlatform, runAs } = require('../../lib/tenant');
 const calendar = require('../../lib/calendar');
+const chat = require('../../lib/chat');
+const meetings = require('../../lib/meetings');
 const { zonedToUtc, toDbDate, fromDbDate, today, addDays, eachDay, yearOf } = require('../../lib/time');
 
 const router = express.Router();
 
 const COLOURS = { GOOGLE: '#2F62E3', MICROSOFT: '#7C3AED', leave: '#E2744A', holiday: '#B34D22', birthday: '#E2744A', company: '#3D9A8B', teamleave: '#F0B49A' };
+
+const MAX_IN_APP = 6;
+const MEETING_TYPES = ['NONE', 'APP', 'GOOGLE', 'TEAMS', 'LINK'];
 
 function companyEventVisible(e, user) {
   if (e.createdById === user.id || e.audience === 'COMPANY') return true;
@@ -27,9 +32,10 @@ function companyEventVisible(e, user) {
 async function eventsFor(user, fromStr, toStr, tz) {
   const fromUtc = zonedToUtc(fromStr, '00:00', tz);
   const toUtc = zonedToUtc(addDays(toStr, 1), '00:00', tz);
-  const [synced, company, holidays, leave] = await Promise.all([
+  const [synced, company, myInvites, holidays, leave] = await Promise.all([
     prisma.syncedEvent.findMany({ where: { userId: user.id, startAt: { lt: toUtc }, endAt: { gt: fromUtc } }, include: { connection: { select: { provider: true } } } }),
     prisma.companyEvent.findMany({ where: { startAt: { lt: toUtc }, endAt: { gt: fromUtc } } }),
+    prisma.meetingInvite.findMany({ where: { userId: user.id } }),
     prisma.publicHoliday.findMany({ where: { date: { gte: toDbDate(fromStr), lte: toDbDate(toStr) } } }),
     prisma.leaveRequest.findMany({
       where: { state: { in: ['APPROVED', 'PARTLY_APPROVED', 'SUBMITTED'] }, dateFrom: { lte: toDbDate(toStr) }, dateTo: { gte: toDbDate(fromStr) }, OR: [{ userId: user.id }, user.departmentId ? { user: { departmentId: user.departmentId } } : { userId: user.id }] },
@@ -44,6 +50,7 @@ async function eventsFor(user, fromStr, toStr, tz) {
     ...company.filter((e) => companyEventVisible(e, user)).map((e) => ({
       id: `c${e.id}`, source: 'company', colour: COLOURS.company, title: e.title, start: e.startAt, end: e.endAt, allDay: false, location: e.location, meetingUrl: e.meetingUrl,
       description: e.description, attendeeCount: (e.attendeeIds || []).length, editable: e.createdById === user.id,
+      meetingType: e.meetingType, myResponse: myInvites.find((i) => i.eventId === e.id)?.status || null,
     })),
     ...holidays.map((x) => ({ id: `h${x.id}`, source: 'holiday', colour: COLOURS.holiday, title: x.kind === 'OFFICE' ? `${x.name} (office closed)` : x.name, date: fromDbDate(x.date), allDay: true })),
   ];
@@ -74,7 +81,7 @@ router.get('/callback/:provider', h(async (req, res) => {
   try {
     const state = jwt.verify(String(req.query.state), process.env.JWT_SECRET);
     if (state.purpose !== 'calendar' || state.provider.toLowerCase() !== req.params.provider) throw new Error('Bad state');
-    await runAs(state.companyId, () => calendar.connectFromCode(state.provider, state.userId, String(req.query.code), { write: Boolean(state.write) }));
+    await runAs(state.companyId, () => calendar.connectFromCode(state.provider, state.userId, String(req.query.code), { write: Boolean(state.write), meetings: Boolean(state.meetings) }));
     return back('calendar=connected');
   } catch (err) {
     console.error('calendar connect failed', err.message);
@@ -186,18 +193,59 @@ router.post('/meetings', h(async (req, res) => {
   const audience = req.body.audience || 'PEOPLE';
   if (audience === 'COMPANY' && !(await can(req.user, 'calendar.company_events'))) throw new HttpError(403, 'Only HR can create company-wide events');
   if (audience === 'DEPARTMENT' && !isAdmin(req.user) && !(await teamIds(req.user)).length) throw new HttpError(403, 'Only leaders can invite a whole department');
+  const meetingType = MEETING_TYPES.includes(req.body.meetingType) ? req.body.meetingType : req.body.meetingUrl ? 'LINK' : 'NONE';
   const attendeeIds = (req.body.attendeeIds || []).map(Number);
+  const departmentId = audience === 'DEPARTMENT' ? Number(req.body.departmentId || req.user.departmentId) : null;
+  const where = { active: true, id: { not: req.user.id }, role: { not: 'SUPER_ADMIN' } };
+  if (audience === 'PEOPLE') where.id = { in: attendeeIds.filter((id) => id !== req.user.id) };
+  if (audience === 'DEPARTMENT') where.departmentId = departmentId;
+  const people = await prisma.user.findMany({ where, select: { id: true, name: true, email: true } });
+  if (!people.length && meetingType !== 'NONE') throw new HttpError(400, 'Choose who to invite');
+
+  let meetingUrl = meetingType === 'LINK' ? req.body.meetingUrl : null;
+  let conversationId = null;
+  if (meetingType === 'LINK' && !/^https:\/\//.test(meetingUrl || '')) throw new HttpError(400, 'Enter the full meeting link');
+  if (meetingType === 'APP') {
+    if (people.length + 1 > MAX_IN_APP) throw new HttpError(400, `In-app meetings can have up to ${MAX_IN_APP} people. Use Google Meet or Teams for bigger ones.`);
+    const conversation = people.length === 1
+      ? await chat.directConversation(req.user.id, people[0].id)
+      : await prisma.conversation.create({ data: { type: 'GROUP', name: String(req.body.title).slice(0, 80), createdById: req.user.id, members: { create: [req.user.id, ...people.map((p) => p.id)].map((userId) => ({ userId })) } } });
+    conversationId = conversation.id;
+    meetingUrl = `/chat?c=${conversationId}&join=1`;
+  }
+  if (meetingType === 'GOOGLE' || meetingType === 'TEAMS') {
+    meetingUrl = await calendar.onlineMeetingFor(req.user, meetingType === 'GOOGLE' ? 'GOOGLE' : 'MICROSOFT', { title: req.body.title, startAt, endAt });
+  }
   const event = await prisma.companyEvent.create({
     data: {
-      title: req.body.title, description: req.body.description, startAt, endAt, location: req.body.location, meetingUrl: req.body.meetingUrl, audience,
-      departmentId: audience === 'DEPARTMENT' ? Number(req.body.departmentId || req.user.departmentId) : null, attendeeIds, createdById: req.user.id,
+      title: req.body.title, description: req.body.description, startAt, endAt, location: req.body.location, meetingUrl, meetingType, conversationId, audience,
+      departmentId, attendeeIds: people.map((p) => p.id), createdById: req.user.id,
     },
   });
-  let invited = attendeeIds;
-  if (audience === 'DEPARTMENT') invited = (await prisma.user.findMany({ where: { active: true, departmentId: event.departmentId, id: { not: req.user.id } }, select: { id: true } })).map((u) => u.id);
-  await notify(invited, { type: 'calendar.invite', title: `${req.user.name} invited you to ${event.title}`, body: event.location || null, link: '/calendar' });
-  await audit(req, { entity: 'CompanyEvent', entityId: event.id, action: 'event.created', after: { title: event.title, audience } });
-  res.status(201).json({ id: event.id });
+  await meetings.sendInvites(event, req.user.name, people);
+  await audit(req, { entity: 'CompanyEvent', entityId: event.id, action: 'event.created', after: { title: event.title, audience, meetingType } });
+  res.status(201).json({ id: event.id, meetingUrl });
+}));
+
+router.get('/meetings/:id', h(async (req, res) => {
+  const event = await prisma.companyEvent.findUnique({ where: { id: intParam(req.params.id) } });
+  if (!event || !companyEventVisible(event, req.user)) throw new HttpError(404, 'Event not found');
+  const invites = await prisma.meetingInvite.findMany({ where: { eventId: event.id } });
+  const users = await prisma.user.findMany({ where: { id: { in: [event.createdById, ...invites.map((i) => i.userId)] } }, select: { id: true, name: true } });
+  const nameOf = (id) => users.find((u) => u.id === id)?.name || 'Former employee';
+  res.json({
+    organiser: nameOf(event.createdById), link: await meetings.joinLink(event), type: meetings.LABELS[event.meetingType],
+    attendees: invites.map((i) => ({ id: i.userId, name: nameOf(i.userId), status: i.status })),
+  });
+}));
+
+router.post('/meetings/:id/respond', h(async (req, res) => {
+  const id = intParam(req.params.id);
+  const invite = await prisma.meetingInvite.findUnique({ where: { eventId_userId: { eventId: id, userId: req.user.id } } });
+  if (!invite) throw new HttpError(404, 'You are not invited to this meeting');
+  const event = await prisma.companyEvent.findUnique({ where: { id } });
+  await meetings.respond(invite, event, req.body.answer === 'accept' ? 'ACCEPTED' : 'DECLINED', req.user.name);
+  res.json({ ok: true });
 }));
 
 router.delete('/meetings/:id', h(async (req, res) => {
@@ -205,6 +253,7 @@ router.delete('/meetings/:id', h(async (req, res) => {
   const event = await prisma.companyEvent.findUnique({ where: { id } });
   if (!event) throw new HttpError(404, 'Event not found');
   if (event.createdById !== req.user.id && !isAdmin(req.user)) throw new HttpError(403, 'Only the organiser can remove this');
+  await meetings.cancelInvites(event, req.user.name);
   await prisma.companyEvent.delete({ where: { id } });
   await audit(req, { entity: 'CompanyEvent', entityId: id, action: 'event.deleted', before: { title: event.title } });
   res.json({ ok: true });

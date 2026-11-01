@@ -25,7 +25,7 @@ function prefsFor(user, group) {
 }
 
 // Sends to in-app and email per each user's preferences. Never throws: a notification must not fail the action.
-async function notify(userIds, { type, title, body, link, payload }) {
+async function notify(userIds, { type, title, body, link, payload, inAppOnly }) {
   const ids = [...new Set([].concat(userIds).filter(Boolean))];
   if (!ids.length) return;
   try {
@@ -42,7 +42,7 @@ async function notify(userIds, { type, title, body, link, payload }) {
           const row = await prisma.notification.create({ data: { userId: user.id, type, title, body, link, payload } });
           emitToUsers([user.id], 'notification', row);
         }
-        if (prefs.email) {
+        if (prefs.email && !inAppOnly) {
           await queueEmail({ to: user.email, name: user.name, subject: title, html: await notificationHtml({ title, body, link }), kind: type, userId: user.id });
         }
       });

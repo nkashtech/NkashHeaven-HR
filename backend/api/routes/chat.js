@@ -4,6 +4,7 @@ const { authenticate, requirePerm } = require('../middleware/auth');
 const { HttpError, h, required, intParam } = require('../middleware/validation');
 const { can } = require('../../lib/permissions');
 const { audit } = require('../../lib/audit');
+const calendar = require('../../lib/calendar');
 const { emitToUsers } = require('../../lib/realtime');
 const { getSettings } = require('../../lib/settings');
 const chat = require('../../lib/chat');
@@ -33,7 +34,7 @@ async function unreadCount(conversationId, member, userId) {
 }
 
 async function conversationView(c, member, userId, others) {
-  const last = await prisma.message.findFirst({ where: { conversationId: c.id }, orderBy: { createdAt: 'desc' } });
+  const last = await prisma.message.findFirst({ where: { conversationId: c.id, ...chat.visibleTo(userId) }, orderBy: { createdAt: 'desc' } });
   const other = c.type === 'DIRECT' ? others.get(c.members.find((m) => m.userId !== userId)?.userId) : null;
   return {
     id: c.id, type: c.type, channelKind: c.channelKind, name: other?.name || c.name || 'Conversation', memberCount: c.members.length,
@@ -92,7 +93,7 @@ router.get('/conversations/:id/messages', h(async (req, res) => {
   await membership(id, req.user.id);
   const before = req.query.before ? Number(req.query.before) : undefined;
   const rows = await prisma.message.findMany({
-    where: { conversationId: id, id: before ? { lt: before } : undefined }, orderBy: { id: 'desc' }, take: 50,
+    where: { conversationId: id, id: before ? { lt: before } : undefined, ...chat.visibleTo(req.user.id) }, orderBy: { id: 'desc' }, take: 50,
   });
   res.json({ messages: await chat.hydrate(rows.reverse()), hasMore: rows.length === 50 });
 }));
@@ -223,7 +224,7 @@ router.get('/search', h(async (req, res) => {
     prisma.message.findMany({
       where: {
         conversationId: conversationId && allowed.includes(conversationId) ? conversationId : { in: allowed },
-        deletedAt: null, body: { contains: q }, senderId: req.query.personId ? Number(req.query.personId) : undefined,
+        ...chat.visibleTo(req.user.id), deletedAt: null, body: { contains: q }, senderId: req.query.personId ? Number(req.query.personId) : undefined,
         createdAt: { gte: req.query.from ? new Date(req.query.from) : undefined, lte: req.query.to ? new Date(`${req.query.to}T23:59:59Z`) : undefined },
       },
       orderBy: { createdAt: 'desc' }, take: 30,
@@ -250,8 +251,20 @@ router.post('/conversations/:id/meeting-link', h(async (req, res) => {
   let url;
   try { url = new URL(String(req.body.url || '').trim()); } catch { throw new HttpError(400, 'Paste the full meeting link'); }
   if (url.protocol !== 'https:' || !MEETING_HOSTS.includes(url.hostname) || url.pathname.endsWith('/new')) throw new HttpError(400, 'Paste a Google Meet or Microsoft Teams meeting link');
-  const message = await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} shared a meeting`, link: url.href });
+  const message = await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} shared a meeting`, link: url.href, receiverOnly: true });
   res.status(201).json({ message });
+}));
+
+// One click: a real meeting on the person's own account, so everyone who joins lands in the same room.
+router.post('/conversations/:id/online-meeting', h(async (req, res) => {
+  const id = intParam(req.params.id);
+  await membership(id, req.user.id);
+  const provider = req.body.provider === 'MICROSOFT' ? 'MICROSOFT' : 'GOOGLE';
+  const startAt = new Date();
+  const url = await calendar.onlineMeetingFor(req.user, provider, { title: `Call with ${req.user.name}`, startAt, endAt: new Date(startAt.getTime() + 3600000) });
+  const label = provider === 'GOOGLE' ? 'Google Meet' : 'Teams';
+  await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} started a ${label} meeting`, link: url, receiverOnly: true });
+  res.status(201).json({ url });
 }));
 
 // Calls in the app. Browsers connect to each other directly, so everyone in a call sends to everyone else: past a handful of people that stops working well.
@@ -271,7 +284,14 @@ async function endCall(call) {
   await prisma.callSignal.deleteMany({ where: { callId: call.id } });
   const answered = await prisma.callMember.count({ where: { callId: call.id, joinedAt: { not: null }, userId: { not: call.startedById } } });
   const minutes = Math.max(1, Math.round((Date.now() - call.startedAt.getTime()) / 60000));
-  await chat.postMessage({ conversationId: call.conversationId, senderId: call.startedById, body: answered ? `Call ended · ${minutes} min` : 'Missed call' });
+  // The "Join call" link has nothing to join any more.
+  await prisma.message.updateMany({ where: { conversationId: call.conversationId, link: { endsWith: `&call=${call.id}` } }, data: { link: null } });
+  if (answered) {
+    await chat.postMessage({ conversationId: call.conversationId, senderId: call.startedById, body: `Call ended · ${minutes} min` });
+  } else {
+    const caller = await prisma.user.findUnique({ where: { id: call.startedById }, select: { name: true } });
+    await chat.postMessage({ conversationId: call.conversationId, senderId: call.startedById, body: `Missed call from ${caller.name}`, receiverOnly: true });
+  }
 }
 
 async function loadCall(req) {
@@ -302,7 +322,7 @@ router.post('/conversations/:id/calls', h(async (req, res) => {
   }
   const now = new Date();
   const call = await prisma.call.create({ data: { conversationId: id, startedById: req.user.id, video: req.body.video !== false, members: { create: { userId: req.user.id, joinedAt: now, lastSeenAt: now } } } });
-  await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} started a ${call.video ? 'video' : 'voice'} call`, link: `/chat?c=${id}&call=${call.id}` });
+  await chat.postMessage({ conversationId: id, senderId: req.user.id, body: `${req.user.name} started a ${call.video ? 'video' : 'voice'} call`, link: `/chat?c=${id}&call=${call.id}`, receiverOnly: true });
   emitToUsers((await chat.memberIds(id)).filter((u) => u !== req.user.id), 'call:ring', { ...callView(call), callerName: req.user.name, conversationName: conv.name });
   return res.status(201).json({ call: callView(call), joined: true });
 }));

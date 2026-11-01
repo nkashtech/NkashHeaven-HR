@@ -1914,13 +1914,18 @@ describe('calls', () => {
     expect((await as('emp').get(`/chat/calls/${call.id}`)).body.call.endedAt).toBeTruthy();
     const { messages } = (await as('emp').get(`/chat/conversations/${conv}/messages`)).body;
     expect(messages[messages.length - 1].body).toMatch(/^Call ended/);
+    expect(messages.some((m) => m.body?.includes('started a'))).toBe(false);
+    const theirs = (await as('nosup').get(`/chat/conversations/${conv}/messages`)).body.messages;
+    expect(theirs.find((m) => m.body?.includes('started a'))).toMatchObject({ link: null });
   });
 
   it('a declined direct call ends as missed', async () => {
     const { call } = (await as('emp').post(`/chat/conversations/${conv}/calls`, {})).body;
     await as('nosup').post(`/chat/calls/${call.id}/decline`);
-    const { messages } = (await as('emp').get(`/chat/conversations/${conv}/messages`)).body;
-    expect(messages[messages.length - 1].body).toBe('Missed call');
+    const caller = (await as('emp').get(`/chat/conversations/${conv}/messages`)).body.messages;
+    expect(caller.some((m) => m.body?.startsWith('Missed call'))).toBe(false);
+    const callee = (await as('nosup').get(`/chat/conversations/${conv}/messages`)).body.messages;
+    expect(callee[callee.length - 1].body).toMatch(/^Missed call from /);
   });
 
   it('only accepts real meeting links', async () => {
@@ -1952,5 +1957,81 @@ describe('display names and photos', () => {
     const other = await asPlatform(async () => await prisma.user.findFirst({ where: { companyId: { not: people[0] && (await prisma.user.findUnique({ where: { id: ids.emp } })).companyId }, role: { not: 'SUPER_ADMIN' } } }));
     if (other) expect(people.map((p) => p.id)).not.toContain(other.id);
     await asPlatform(async () => { await prisma.profile.update({ where: { userId: ids.emp }, data: { photoFileId: null } }); });
+  });
+});
+
+describe('online meetings and invitations', () => {
+  const realFetch = global.fetch;
+  const company = async () => (await asPlatform(async () => await prisma.user.findUnique({ where: { id: ids.lead } }))).companyId;
+  afterEach(() => { global.fetch = realFetch; delete process.env.GOOGLE_CLIENT_ID; delete process.env.GOOGLE_CLIENT_SECRET; });
+
+  const googleWorks = (link) => {
+    process.env.GOOGLE_CLIENT_ID = 'id';
+    process.env.GOOGLE_CLIENT_SECRET = 'secret';
+    global.fetch = jest.fn(async (url) => ({ ok: true, json: async () => (String(url).includes('token') ? { access_token: 't' } : { hangoutLink: link }), text: async () => '' }));
+  };
+
+  it('explains what is missing before Meet can be used', async () => {
+    const conv = (await as('lead').post('/chat/direct', { userId: ids.emp })).body.conversationId;
+    const off = await as('lead').post(`/chat/conversations/${conv}/online-meeting`, { provider: 'GOOGLE' });
+    expect([off.status, off.body.code]).toEqual([409, 'NOT_SET_UP']);
+    process.env.GOOGLE_CLIENT_ID = 'id';
+    const needed = await as('lead').post(`/chat/conversations/${conv}/online-meeting`, { provider: 'GOOGLE' });
+    expect(needed.body.code).toBe('CONNECT_NEEDED');
+    expect(needed.body.url).toContain('calendar.events');
+  });
+
+  it('creates one real Meet link and only the other person sees the notice', async () => {
+    const { encrypt } = require('../lib/crypto');
+    await runAs(await company(), async () => { await prisma.calendarConnection.create({ data: { userId: ids.lead, provider: 'GOOGLE', refreshEnc: encrypt('r'), canWrite: true } }); });
+    googleWorks('https://meet.google.com/abc-defg-hij');
+    const conv = (await as('lead').post('/chat/direct', { userId: ids.emp })).body.conversationId;
+    const res = await as('lead').post(`/chat/conversations/${conv}/online-meeting`, { provider: 'GOOGLE' });
+    expect(res.body.url).toBe('https://meet.google.com/abc-defg-hij');
+    const mine = (await as('lead').get(`/chat/conversations/${conv}/messages`)).body.messages;
+    expect(mine.some((m) => m.link === res.body.url)).toBe(false);
+    const theirs = (await as('emp').get(`/chat/conversations/${conv}/messages`)).body.messages;
+    expect(theirs.some((m) => m.link === res.body.url)).toBe(true);
+  });
+
+  const invite = (extra) => as('lead').post('/calendar/meetings', { title: 'Planning', date: '2030-03-04', from: '09:00', to: '10:00', attendeeIds: [ids.emp, ids.hr], ...extra });
+  const tokenFor = async (eventId, userId) => {
+    const email = await asPlatform(async () => { const u = await prisma.user.findUnique({ where: { id: userId } }); return prisma.emailJob.findFirst({ where: { toEmail: u.email, subject: 'Meeting invite: Planning' }, orderBy: { id: 'desc' } }).then((x) => x); });
+    return decrypt(email.htmlEnc).match(/meeting-invite\/([a-f0-9]+)\?answer=accept/)[1];
+  };
+
+  it('emails each person a link to accept or decline, with the meeting link, without signing in', async () => {
+    const res = await invite({ meetingType: 'APP' });
+    expect(res.status).toBe(201);
+    expect(res.body.meetingUrl).toMatch(/^\/chat\?c=\d+&join=1$/);
+    const token = await tokenFor(res.body.id, ids.emp);
+    const seen = await request(app).get(`/api/public/meeting-invite/${token}`);
+    expect(seen.body).toMatchObject({ title: 'Planning', status: 'PENDING', type: 'In-app call' });
+    expect(seen.body.link).toContain('join=1');
+    const done = await request(app).post(`/api/public/meeting-invite/${token}`).send({ answer: 'accept' });
+    expect(done.body.status).toBe('ACCEPTED');
+    await as('hr').post(`/calendar/meetings/${res.body.id}/respond`, { answer: 'decline' });
+    const { attendees } = (await as('lead').get(`/calendar/meetings/${res.body.id}`)).body;
+    expect(attendees.find((a) => a.id === ids.emp).status).toBe('ACCEPTED');
+    expect(attendees.find((a) => a.id === ids.hr).status).toBe('DECLINED');
+    expect((await as('lead').get(`/calendar/meetings/${res.body.id}`)).body.organiser).toBeTruthy();
+    expect((await request(app).get('/api/public/meeting-invite/not-a-token')).status).toBe(404);
+  });
+
+  it('keeps in-app meetings small and needs a connected account for Meet', async () => {
+    const people = await asPlatform(async () => (await prisma.user.findMany({ where: { companyId: await company(), active: true, role: { not: 'SUPER_ADMIN' } }, select: { id: true } })).map((u) => u.id));
+    if (people.length > 6) expect((await invite({ meetingType: 'APP', attendeeIds: people })).status).toBe(400);
+    expect((await invite({ meetingType: 'LINK', meetingUrl: 'not-a-link' })).status).toBe(400);
+    googleWorks('https://meet.google.com/xyz-abcd-efg');
+    const made = await invite({ meetingType: 'GOOGLE' });
+    expect(made.body.meetingUrl).toBe('https://meet.google.com/xyz-abcd-efg');
+    expect((await as('emp').post('/calendar/meetings', { title: 'X', date: '2030-03-04', from: '09:00', to: '10:00', attendeeIds: [ids.lead], meetingType: 'GOOGLE' })).body.code).toBe('CONNECT_NEEDED');
+  });
+
+  it('cancelling removes the invitations and tells people', async () => {
+    const res = await invite({ meetingType: 'NONE', location: 'Boardroom' });
+    const token = await tokenFor(res.body.id, ids.emp);
+    expect((await as('lead').delete(`/calendar/meetings/${res.body.id}`)).status).toBe(200);
+    expect((await request(app).get(`/api/public/meeting-invite/${token}`)).status).toBe(404);
   });
 });

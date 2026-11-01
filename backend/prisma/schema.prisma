@@ -855,6 +855,8 @@ model Message {
   replyToId      Int?
   // The original sender's name, on a forwarded copy
   forwardedFrom  String?
+  // A call or meeting notice: the person who did it doesn't need telling
+  receiverOnly   Boolean   @default(false)
   pinnedAt       DateTime?
   pinnedById     Int?
   editedAt       DateTime?
@@ -922,6 +924,8 @@ model CalendarConnection {
   status       CalendarStatus   @default(CONNECTED)
   // Set when the user allowed write access so approved leave can be pushed as "Out of office"
   pushLeave    Boolean          @default(false)
+  // Allowed to create meetings on this account
+  canWrite     Boolean          @default(false)
   syncToken    String?          @db.Text
   channelId    String?          @unique
   channelResource String?
@@ -971,10 +975,30 @@ model CompanyEvent {
   audience     String   @default("PEOPLE")
   departmentId Int?
   attendeeIds  Json?
+  // NONE (in person), APP, GOOGLE, TEAMS or LINK
+  meetingType  String   @default("NONE")
+  // Where an in-app meeting's call happens
+  conversationId Int?
   createdById  Int
   createdAt    DateTime @default(now())
 
   @@index([startAt])
+}
+
+// One person's invitation. The token in their email lets them answer without signing in.
+model MeetingInvite {
+  id          Int       @id @default(autoincrement())
+  companyId   Int
+  eventId     Int
+  userId      Int
+  // PENDING, ACCEPTED or DECLINED
+  status      String    @default("PENDING")
+  tokenHash   String    @unique
+  respondedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([eventId, userId])
+  @@index([userId])
 }
 
 // A role a company defines for itself. permissions lists what it can open and do; scope is how much data it sees.

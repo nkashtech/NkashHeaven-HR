@@ -7,6 +7,7 @@ const { notify } = require('./notify');
 const { superAdminIds } = require('./access');
 const { emitToUsers } = require('./realtime');
 const { currentCompanyId } = require('./tenant');
+const { HttpError } = require('../api/middleware/validation');
 
 // Read-only scopes only (CAL-02). OAuth is the same consent screen a phone calendar uses; no password is ever stored.
 const GOOGLE_SCOPES = 'openid email https://www.googleapis.com/auth/calendar.readonly';
@@ -23,15 +24,15 @@ const isHttps = () => apiUrl().startsWith('https://');
 
 class TokenRevoked extends Error {}
 
-async function authUrl(provider, userId, { write = false } = {}) {
+async function authUrl(provider, userId, { write = false, meetings = false } = {}) {
   const config = await getConfig(provider.toLowerCase());
   if (!config.clientId) return null;
-  const state = jwt.sign({ userId, provider, write, companyId: currentCompanyId(), purpose: 'calendar' }, process.env.JWT_SECRET, { expiresIn: '10m' });
+  const state = jwt.sign({ userId, provider, write, meetings, companyId: currentCompanyId(), purpose: 'calendar' }, process.env.JWT_SECRET, { expiresIn: '10m' });
   if (provider === 'GOOGLE') {
-    const q = new URLSearchParams({ client_id: config.clientId, redirect_uri: redirectUri(provider), response_type: 'code', scope: write ? `${GOOGLE_SCOPES} ${GOOGLE_WRITE}` : GOOGLE_SCOPES, access_type: 'offline', prompt: 'consent', state });
+    const q = new URLSearchParams({ client_id: config.clientId, redirect_uri: redirectUri(provider), response_type: 'code', scope: write || meetings ? `${GOOGLE_SCOPES} ${GOOGLE_WRITE}` : GOOGLE_SCOPES, access_type: 'offline', prompt: 'consent', state });
     return `https://accounts.google.com/o/oauth2/v2/auth?${q}`;
   }
-  const q = new URLSearchParams({ client_id: config.clientId, redirect_uri: redirectUri(provider), response_type: 'code', scope: write ? `${MS_SCOPES} ${MS_WRITE}` : MS_SCOPES, state, prompt: 'select_account' });
+  const q = new URLSearchParams({ client_id: config.clientId, redirect_uri: redirectUri(provider), response_type: 'code', scope: write || meetings ? `${MS_SCOPES} ${MS_WRITE}` : MS_SCOPES, state, prompt: 'select_account' });
   return `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${q}`;
 }
 
@@ -59,7 +60,7 @@ async function accessTokenFor(connection) {
   return data.access_token;
 }
 
-async function connectFromCode(provider, userId, code, { write = false } = {}) {
+async function connectFromCode(provider, userId, code, { write = false, meetings = false } = {}) {
   const tokens = await tokenRequest(provider, { grant_type: 'authorization_code', code, redirect_uri: redirectUri(provider) });
   let accountEmail = null;
   if (provider === 'GOOGLE' && tokens.id_token) {
@@ -71,8 +72,8 @@ async function connectFromCode(provider, userId, code, { write = false } = {}) {
   const refreshEnc = encrypt(tokens.refresh_token);
   const connection = await prisma.calendarConnection.upsert({
     where: { userId_provider: { userId, provider } },
-    create: { userId, provider, accountEmail, refreshEnc, pushLeave: write },
-    update: { accountEmail, refreshEnc, status: 'CONNECTED', lastError: null, syncToken: null, pushLeave: write },
+    create: { userId, provider, accountEmail, refreshEnc, pushLeave: write, canWrite: write || meetings },
+    update: { accountEmail, refreshEnc, status: 'CONNECTED', lastError: null, syncToken: null, pushLeave: write, canWrite: write || meetings },
   });
   await syncConnection(connection);
   await subscribePush(connection).catch((err) => console.warn('calendar push subscribe failed:', err.message));
@@ -235,6 +236,44 @@ async function disconnect(connection) {
   await prisma.calendarConnection.delete({ where: { id: connection.id } });
 }
 
+async function createOnlineMeeting(connection, { title, startAt, endAt }) {
+  const token = await accessTokenFor(connection);
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  if (connection.provider === 'GOOGLE') {
+    const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?conferenceDataVersion=1', {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        summary: title, start: { dateTime: startAt.toISOString() }, end: { dateTime: endAt.toISOString() },
+        conferenceData: { createRequest: { requestId: crypto.randomUUID(), conferenceSolutionKey: { type: 'hangoutsMeet' } } },
+      }),
+    });
+    const data = await res.json();
+    return res.ok ? data.hangoutLink || data.conferenceData?.entryPoints?.find((e) => e.entryPointType === 'video')?.uri || null : null;
+  }
+  const res = await fetch('https://graph.microsoft.com/v1.0/me/events', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      subject: title, start: { dateTime: startAt.toISOString().slice(0, 19), timeZone: 'UTC' }, end: { dateTime: endAt.toISOString().slice(0, 19), timeZone: 'UTC' },
+      isOnlineMeeting: true, onlineMeetingProvider: 'teamsForBusiness',
+    }),
+  });
+  const data = await res.json();
+  return res.ok ? data.onlineMeeting?.joinUrl || null : null;
+}
+
+// The link for a new Meet or Teams meeting, or an error saying what the person has to set up first.
+async function onlineMeetingFor(user, provider, details) {
+  const key = provider.toLowerCase();
+  const label = provider === 'GOOGLE' ? 'Google Meet' : 'Microsoft Teams';
+  const config = await getConfig(key);
+  if (!config.clientId) throw new HttpError(409, `${label} is not set up yet. The Super Admin can add it under Integrations.`, { code: 'NOT_SET_UP' });
+  const connection = await prisma.calendarConnection.findFirst({ where: { userId: user.id, provider, canWrite: true, status: 'CONNECTED' } });
+  if (!connection) throw new HttpError(409, `Connect your ${label} account first`, { code: 'CONNECT_NEEDED', url: await authUrl(provider, user.id, { meetings: true }) });
+  const url = await createOnlineMeeting(connection, details);
+  if (!url) throw new HttpError(502, `${label} could not create the meeting. ${provider === 'MICROSOFT' ? 'Teams meetings need a work Microsoft account.' : 'Try again.'}`);
+  return url;
+}
+
 // One-way "Out of office" events for approved leave. Failures never affect the approval itself.
 async function pushLeave(request) {
   const connections = await prisma.calendarConnection.findMany({ where: { userId: request.userId, pushLeave: true, status: 'CONNECTED' } });
@@ -288,4 +327,4 @@ async function syncAll() {
   return { accounts: connections.length, ok };
 }
 
-module.exports = { authUrl, connectFromCode, syncConnection, disconnect, syncAll, subscribePush, normaliseGoogle, normaliseMicrosoft, pushLeave, removePushedLeave };
+module.exports = { onlineMeetingFor, authUrl, connectFromCode, syncConnection, disconnect, syncAll, subscribePush, normaliseGoogle, normaliseMicrosoft, pushLeave, removePushedLeave };

@@ -99,6 +99,17 @@ async function notificationHtml({ title, body, link }) {
   return layout(`<h1 style="font-size:21px;margin:0 0 12px">${esc(title)}</h1>${intro}${body ? `<p style="white-space:pre-line">${esc(body)}</p>` : ''}${link ? button(companyUrl(b, link), d.buttonText || `Open ${b.companyName}`, b, d) : ''}`, b, d);
 }
 
+async function meetingHtml({ name, organiser, title, when, kind, location, description, joinUrl, acceptUrl, declineUrl }) {
+  const b = await brand();
+  const row = (k, v) => (v ? `<tr><td style="color:#666;padding:4px 18px 4px 0" valign="top">${k}</td><td style="font-weight:600;padding:4px 0">${esc(v)}</td></tr>` : '');
+  const decline = `<a href="${esc(declineUrl)}" style="display:inline-block;border:1px solid #d5d5d8;border-radius:10px;color:#1a1a1a;font-weight:600;padding:12px 22px;text-decoration:none;margin-left:8px">Decline</a>`;
+  const accept = `<a href="${esc(acceptUrl)}" style="display:inline-block;background:${esc(b.primaryColor || '#B34D22')};border-radius:10px;color:#fff;font-weight:600;padding:12px 22px;text-decoration:none">Accept</a>`;
+  return layout(`<h1 style="font-size:22px;margin:0 0 12px">${esc(title)}</h1><p>Hi ${esc(name.split(' ')[0])}, ${esc(organiser)} invited you to a meeting.</p>
+<div style="background:#f6f6f7;border-radius:12px;padding:14px 18px;margin:16px 0"><table role="presentation" style="font-size:14px">${row('When', when)}${row('Type', kind)}${row('Where', location)}${row('About', description)}</table></div>
+<p style="margin:20px 0">${accept}${decline}</p>
+${joinUrl ? `<p style="font-size:14px"><b>Meeting link</b><br><a href="${esc(joinUrl)}">${esc(joinUrl)}</a></p>` : ''}`, b);
+}
+
 async function payslipHtml({ name, period }) {
   const b = await brand();
   const t = await getTemplate('payslip_ready');
@@ -195,5 +206,5 @@ async function handleBrevoEvent(event) {
 }
 
 module.exports = {
-  TEMPLATES, getTemplate, fill, companyUrl, brand, welcomeHtml, resetHtml, notificationHtml, payslipHtml, queueEmail, processEmailQueue, handleBrevoEvent, clientUrl,
+  TEMPLATES, getTemplate, fill, companyUrl, brand, welcomeHtml, resetHtml, notificationHtml, meetingHtml, payslipHtml, queueEmail, processEmailQueue, handleBrevoEvent, clientUrl,
 };

@@ -45,12 +45,15 @@ router.get('/', h(async (req, res) => {
     cursor.message = (await prisma.message.findFirst({ where: { conversationId: { in: conversationIds } }, orderBy: { id: 'desc' }, select: { id: true } }))?.id || 0;
   } else if (conversationIds.length) {
     const [added, changed] = await Promise.all([
-      prisma.message.findMany({ where: { conversationId: { in: conversationIds }, id: { gt: cursor.message } }, orderBy: { id: 'asc' }, take: 100 }),
-      prisma.message.findMany({ where: { conversationId: { in: conversationIds }, id: { lte: cursor.message }, updatedAt: { gt: new Date(since.getTime() - OVERLAP_MS) } }, take: 100 }),
+      prisma.message.findMany({ where: { conversationId: { in: conversationIds }, id: { gt: cursor.message }, ...chat.visibleTo(req.user.id) }, orderBy: { id: 'asc' }, take: 100 }),
+      prisma.message.findMany({ where: { conversationId: { in: conversationIds }, id: { lte: cursor.message }, updatedAt: { gt: new Date(since.getTime() - OVERLAP_MS) }, ...chat.visibleTo(req.user.id) }, take: 100 }),
     ]);
     out.messages = await chat.hydrate(added);
     out.updated = await chat.hydrate(changed);
-    if (added.length) cursor.message = added[added.length - 1].id;
+    // Hidden notices are skipped next time too, because the cursor moves past whatever exists now.
+    const newest = await prisma.message.findFirst({ where: { conversationId: { in: conversationIds } }, orderBy: { id: 'desc' }, select: { id: true } });
+    const reached = added.length === 100 ? added[99].id : newest?.id;
+    if (reached) cursor.message = Math.max(cursor.message, reached);
   }
   if (conversationIds.length) out.calls = await ringing(req.user.id, conversationIds);
   if (!first) {

@@ -31,6 +31,7 @@ const HrRoles = page(() => import('./pages/hr/Roles'))
 const MyCard = page(() => import('./pages/cards/MyCard'))
 const Kiosk = page(() => import('./pages/cards/Kiosk'))
 const PublicCard = page(() => import('./pages/cards/PublicCard'))
+const MeetingInvite = page(() => import('./pages/MeetingInvite'))
 const ForcePassword = page(() => import('./pages/auth/ForcePassword'))
 const EnrollTwoFactor = page(() => import('./pages/auth/EnrollTwoFactor'))
 const SetupWizard = page(() => import('./pages/auth/SetupWizard'))
@@ -144,7 +145,7 @@ function CompanyRoute() {
   if (rest === 'forgot-password') return <ForgotPassword />
   if (rest === 'reset-password') return <ResetPassword />
   if (user) return <Navigate to={rest && rest !== 'login' ? `/${rest}${search}` : '/'} replace />
-  if (rest && rest !== 'login') return <Navigate to={`/c/${slug}/login?next=/${rest}`} replace />
+  if (rest && rest !== 'login') return <Navigate to={`/c/${slug}/login?next=${encodeURIComponent(`/${rest}${search}`)}`} replace />
   return <Login />
 }
 
@@ -161,6 +162,7 @@ export default function App() {
     <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/card/:token" element={<PublicCard />} />
+        <Route path="/meeting-invite/:token" element={<MeetingInvite />} />
         <Route path="/c/:slug/*" element={<CompanyRoute />} />
         <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />

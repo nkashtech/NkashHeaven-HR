@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronLeft, ChevronRight, Clock, MapPin, Plus, RefreshCw, Users, Video } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Check, ChevronLeft, ChevronRight, Clock, MapPin, Plus, RefreshCw, Users, Video, X } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useAuth } from '../contexts/AuthContext'
 import { useLive } from '../contexts/LiveContext'
 import { useFetch } from '../components/hooks'
-import { Card, Empty, Field, Modal, PageHeader, Pill, Segmented } from '../components/ui'
+import { Avatar, Card, Empty, Field, Modal, PageHeader, Pill, Segmented } from '../components/ui'
 import { addDays, ago, companyToday, dayOf, fmtDay, fmtRange, fmtTime, mondayOf } from '../utils/format'
 import api, { errorMessage } from '../services/api'
 
@@ -56,16 +57,20 @@ function Connections() {
 function NewMeeting({ day, onClose, onSaved }) {
   const { can, user } = useAuth()
   const { data } = useFetch('/people/directory')
-  const [form, setForm] = useState({ title: '', date: day, from: '09:00', to: '10:00', location: '', meetingUrl: '', audience: 'PEOPLE', attendeeIds: [] })
+  const [form, setForm] = useState({ title: '', date: day, from: '09:00', to: '10:00', description: '', location: '', meetingUrl: '', meetingType: 'APP', audience: 'PEOPLE', attendeeIds: [] })
+  const [q, setQ] = useState('')
+  const [connect, setConnect] = useState(null)
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value })
   const submit = async (e) => {
     e.preventDefault()
     try {
       await api.post('/calendar/meetings', form)
-      toast.success('Meeting created and people invited')
+      toast.success('Meeting created and invites sent')
       onSaved()
     } catch (err) {
-      toast.error(errorMessage(err))
+      // Meet and Teams need the person's account linked once. Coming back, they press Create again.
+      if (err.response?.data?.code === 'CONNECT_NEEDED') setConnect(err.response.data.url)
+      else toast.error(errorMessage(err))
     }
   }
   const toggle = (id) => setForm({ ...form, attendeeIds: form.attendeeIds.includes(id) ? form.attendeeIds.filter((x) => x !== id) : [...form.attendeeIds, id] })
@@ -78,8 +83,19 @@ function NewMeeting({ day, onClose, onSaved }) {
           <Field label="From"><input type="time" required className="input" value={form.from} onChange={set('from')} /></Field>
           <Field label="To"><input type="time" required className="input" value={form.to} onChange={set('to')} /></Field>
         </div>
-        <Field label="Location"><input className="input" value={form.location} onChange={set('location')} /></Field>
-        <Field label="Meeting link"><input type="url" className="input" placeholder="https://" value={form.meetingUrl} onChange={set('meetingUrl')} /></Field>
+        <Field label="Meeting type">
+          <select className="input" value={form.meetingType} onChange={(e) => { setForm({ ...form, meetingType: e.target.value }); setConnect(null) }}>
+            <option value="APP">In-app call (up to 6 people)</option>
+            <option value="GOOGLE">Google Meet</option>
+            <option value="TEAMS">Microsoft Teams</option>
+            <option value="LINK">Another meeting link</option>
+            <option value="NONE">In person</option>
+          </select>
+        </Field>
+        {connect && <div className="rounded-lg bg-subtle p-2.5 text-[13px]">Connect your account once so meetings can be created for you. <a className="link" href={connect}>Connect now</a></div>}
+        {form.meetingType === 'NONE' && <Field label="Location"><input className="input" value={form.location} onChange={set('location')} /></Field>}
+        {form.meetingType === 'LINK' && <Field label="Meeting link"><input type="url" required className="input" placeholder="https://" value={form.meetingUrl} onChange={set('meetingUrl')} /></Field>}
+        <Field label="Details"><textarea rows={2} className="input" value={form.description} onChange={set('description')} /></Field>
         <Field label="Who">
           <select className="input" value={form.audience} onChange={set('audience')}>
             <option value="PEOPLE">Selected people</option>
@@ -88,10 +104,13 @@ function NewMeeting({ day, onClose, onSaved }) {
           </select>
         </Field>
         {form.audience === 'PEOPLE' && (
-          <div className="max-h-36 space-y-1 overflow-y-auto rounded-xl border border-line p-2">
-            {data?.people.filter((p) => p.id !== user.id).map((p) => (
-              <label key={p.id} className="flex items-center gap-2 text-[13px]"><input type="checkbox" className="accent-brand" checked={form.attendeeIds.includes(p.id)} onChange={() => toggle(p.id)} />{p.name}</label>
-            ))}
+          <div className="space-y-2">
+            <input className="input" placeholder="Search people" aria-label="Search people" value={q} onChange={(e) => setQ(e.target.value)} />
+            <div className="max-h-36 space-y-1 overflow-y-auto rounded-xl border border-line p-2">
+              {data?.people.filter((p) => p.id !== user.id && p.name.toLowerCase().includes(q.toLowerCase())).map((p) => (
+                <label key={p.id} className="flex items-center gap-2 text-[13px]"><input type="checkbox" className="accent-brand" checked={form.attendeeIds.includes(p.id)} onChange={() => toggle(p.id)} />{p.name}</label>
+              ))}
+            </div>
           </div>
         )}
         <div className="flex justify-end gap-2">
@@ -103,7 +122,12 @@ function NewMeeting({ day, onClose, onSaved }) {
   )
 }
 
-function EventDetail({ event, onClose, onDeleted }) {
+const RESPONSE = { ACCEPTED: ['ok', 'Accepted'], DECLINED: ['bad', 'Declined'], PENDING: ['neutral', 'No response'] }
+
+function EventDetail({ event, onClose, onDeleted, onAnswered }) {
+  const isMeeting = event.source === 'company'
+  const { data, reload } = useFetch(isMeeting ? `/calendar/meetings/${event.id.slice(1)}` : null)
+  const [response, setResponse] = useState(event.myResponse)
   const remove = async () => {
     try {
       await api.delete(`/calendar/meetings/${event.id.slice(1)}`)
@@ -112,17 +136,40 @@ function EventDetail({ event, onClose, onDeleted }) {
       toast.error(errorMessage(err))
     }
   }
-  const label = { google: 'Google Calendar', microsoft: 'Outlook', company: 'Company event', holiday: 'Public holiday', leave: 'Leave', teamleave: 'Team leave', birthday: 'Birthday' }[event.source]
+  const answer = async (choice) => {
+    try {
+      await api.post(`/calendar/meetings/${event.id.slice(1)}/respond`, { answer: choice })
+      setResponse(choice === 'accept' ? 'ACCEPTED' : 'DECLINED')
+      reload()
+      onAnswered()
+    } catch (err) {
+      toast.error(errorMessage(err))
+    }
+  }
+  const label = { google: 'Google Calendar', microsoft: 'Outlook', company: data?.type || 'Company event', holiday: 'Public holiday', leave: 'Leave', teamleave: 'Team leave', birthday: 'Birthday' }[event.source]
+  const link = data?.link || event.meetingUrl
+  const inApp = event.meetingUrl?.startsWith('/')
   return (
     <Modal title={event.title} onClose={onClose}>
       <div className="space-y-2 text-[13px]">
         <Pill tone="ok">{label}</Pill>
         <div className="flex items-center gap-2"><Clock size={14} />{event.allDay ? fmtDay(event.date || dayOf(event.start), 'EEE d MMM yyyy') : `${fmtDay(dayOf(event.start), 'EEE d MMM')} · ${fmtTime(event.start)}–${fmtTime(event.end)}`}</div>
         {event.location && <div className="flex items-center gap-2"><MapPin size={14} />{event.location}</div>}
-        {event.attendeeCount > 0 && <div className="flex items-center gap-2"><Users size={14} />{event.attendeeCount} people</div>}
+        {data?.organiser && <div className="flex items-center gap-2"><Users size={14} />Organised by {data.organiser}</div>}
+        {!data?.attendees?.length && event.attendeeCount > 0 && <div className="flex items-center gap-2"><Users size={14} />{event.attendeeCount} people</div>}
         {event.description && <p className="text-ink-soft">{event.description}</p>}
-        <div className="flex gap-2 pt-1">
-          {event.meetingUrl && <a className="btn-primary" href={event.meetingUrl} target="_blank" rel="noreferrer"><Video size={14} />Join</a>}
+        {link && <p className="break-all"><b>Meeting link</b><br /><a className="link" href={link} target="_blank" rel="noreferrer">{link}</a></p>}
+        {data?.attendees?.length > 0 && (
+          <div className="max-h-40 space-y-1 overflow-y-auto border-t border-line pt-2">
+            {data.attendees.map((a) => <div key={a.id} className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-1.5"><Avatar name={a.name} size={22} /><span className="truncate">{a.name}</span></span><Pill tone={RESPONSE[a.status][0]}>{RESPONSE[a.status][1]}</Pill></div>)}
+          </div>
+        )}
+        <div className="flex flex-wrap gap-2 pt-1">
+          {event.meetingUrl && (inApp
+            ? <Link className="btn-primary" to={event.meetingUrl}><Video size={14} />Join</Link>
+            : <a className="btn-primary" href={event.meetingUrl} target="_blank" rel="noreferrer"><Video size={14} />Join</a>)}
+          {response && <button className="btn-outline" disabled={response === 'ACCEPTED'} onClick={() => answer('accept')}><Check size={14} />Accept</button>}
+          {response && <button className="btn-outline" disabled={response === 'DECLINED'} onClick={() => answer('decline')}><X size={14} />Decline</button>}
           {event.editable && <button className="btn-danger" onClick={remove}>Delete</button>}
         </div>
       </div>
@@ -277,7 +324,9 @@ export default function Calendar() {
             <Card title="Next up">
               <div className="text-[13px] font-semibold">{next.title} · {fmtTime(next.start)}</div>
               {next.location && <div className="text-xs text-ink-muted">{next.location}</div>}
-              {next.meetingUrl && <a href={next.meetingUrl} target="_blank" rel="noreferrer" className="btn-primary mt-2"><Video size={14} />Join</a>}
+              {next.meetingUrl && (next.meetingUrl.startsWith('/')
+                ? <Link to={next.meetingUrl} className="btn-primary mt-2"><Video size={14} />Join</Link>
+                : <a href={next.meetingUrl} target="_blank" rel="noreferrer" className="btn-primary mt-2"><Video size={14} />Join</a>)}
             </Card>
           )}
         </div>
@@ -297,7 +346,7 @@ export default function Calendar() {
           {view === 'agenda' && <Agenda events={events} onOpen={setOpen} />}
         </div>
       </div>
-      {open && <EventDetail event={open} onClose={() => setOpen(null)} onDeleted={() => { setOpen(null); reload() }} />}
+      {open && <EventDetail event={open} onClose={() => setOpen(null)} onDeleted={() => { setOpen(null); reload() }} onAnswered={reload} />}
       {creating && <NewMeeting day={anchor} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); reload() }} />}
     </>
   )

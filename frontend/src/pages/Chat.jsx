@@ -71,7 +71,7 @@ function ForwardModal({ message, list, onClose }) {
   )
 }
 
-// Meet and Teams can't ring anyone or run inside this page, so the meeting opens there and its link comes back here.
+// Until Google or Microsoft is connected to the system, a meeting's real link is only visible on their site.
 function ShareMeeting({ provider, conversationId, onClose }) {
   const [label, startUrl] = MEETINGS[provider]
   const [url, setUrl] = useState('')
@@ -85,7 +85,7 @@ function ShareMeeting({ provider, conversationId, onClose }) {
   return (
     <Modal title={`Share a ${label} meeting`} onClose={onClose}>
       <form onSubmit={share} className="space-y-3">
-        <p className="text-[13px] text-ink-soft">{label} opened in a new tab. Copy the meeting link from there and paste it here so everyone joins the same meeting.</p>
+        <p className="text-[13px] text-ink-soft">{label} isn't connected to this system yet, so its link can't be picked up by itself. Copy it from the new tab and paste it here so everyone joins the same meeting.</p>
         <a className="link text-[13px]" href={startUrl} target="_blank" rel="noreferrer">Open {label} again</a>
         <Field label="Meeting link"><input required autoFocus className="input" placeholder="https://" value={url} onChange={(e) => setUrl(e.target.value)} /></Field>
         <button className="btn-primary w-full">Share in this chat</button>
@@ -229,6 +229,7 @@ export default function Chat() {
   const [params, setParams] = useSearchParams()
   const { data: list, reload: reloadList } = useFetch('/chat/conversations')
   const [activeId, setActiveId] = useState(params.get('c') ? Number(params.get('c')) : null)
+  const joinOnOpen = useRef(params.get('join') === '1')
   const [info, setInfo] = useState(null)
   const [messages, setMessages] = useState([])
   const [text, setText] = useState('')
@@ -277,6 +278,14 @@ export default function Chat() {
 
   useEffect(() => { bottom.current?.scrollIntoView() }, [messages])
 
+  // A scheduled in-app meeting's link: whoever arrives first starts the call and the rest join it.
+  useEffect(() => {
+    if (joinOnOpen.current && activeId) {
+      joinOnOpen.current = false
+      startCall(activeId, true)
+    }
+  }, [activeId, startCall])
+
   const refreshInfo = useCallback((id) => api.get(`/chat/conversations/${id}`).then((r) => { if (id === activeRef.current) setInfo(r.data) }).catch(() => {}), [])
 
   // Anything typed while offline waits here and goes out on reconnect (UC-11 4a).
@@ -300,6 +309,8 @@ export default function Chat() {
   useEffect(() => {
     const offs = [
       on('chat:message', (m) => {
+        // Notices about your own call or meeting are for the other person.
+        if (m.receiverOnly && m.senderId === user.id) return
         if (m.conversationId === activeRef.current) {
           setMessages((ms) => (ms.some((x) => x.id === m.id || (m.clientId && x.clientId === m.clientId)) ? ms.map((x) => (x.clientId && x.clientId === m.clientId ? m : x)) : [...ms, m]))
           api.post(`/chat/conversations/${m.conversationId}/read`).catch(() => {})
@@ -409,10 +420,27 @@ export default function Chat() {
     else toast('That message is further back in this conversation')
   }
   const placeCall = (video) => { setCallMenu(false); startCall(activeId, video) }
-  const shareMeeting = (provider) => {
+  // Opened before the wait, because browsers block a new tab that isn't a direct result of the click.
+  const startMeeting = async (provider) => {
     setCallMenu(false)
-    window.open(MEETINGS[provider][1], '_blank', 'noreferrer')
-    setMeeting(provider)
+    const tab = window.open('', '_blank')
+    try {
+      const { data } = await api.post(`/chat/conversations/${activeId}/online-meeting`, { provider: provider === 'google' ? 'GOOGLE' : 'MICROSOFT' })
+      if (tab) tab.location.href = data.url
+      else window.open(data.url, '_blank')
+    } catch (err) {
+      const { code, url } = err.response?.data || {}
+      if (code === 'CONNECT_NEEDED') {
+        tab?.close()
+        window.location.href = url
+      } else if (code === 'NOT_SET_UP') {
+        if (tab) tab.location.href = MEETINGS[provider][1]
+        setMeeting(provider)
+      } else {
+        tab?.close()
+        toast.error(errorMessage(err))
+      }
+    }
   }
   const exportChat = async (reason) => {
     await download(`/chat/conversations/${activeId}/export`, 'conversation.txt', { method: 'post', data: { reason } }).catch((e) => toast.error(errorMessage(e)))
@@ -452,8 +480,8 @@ export default function Chat() {
                     <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => placeCall(true)}><Video size={14} />Video call</button>
                     <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => placeCall(false)}><Phone size={14} />Voice call</button>
                     <div className="my-1 border-t border-line" />
-                    <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => shareMeeting('google')}><ExternalLink size={14} />Google Meet</button>
-                    <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => shareMeeting('teams')}><ExternalLink size={14} />Microsoft Teams</button>
+                    <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => startMeeting('google')}><ExternalLink size={14} />Google Meet</button>
+                    <button role="menuitem" className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] hover:bg-subtle" onClick={() => startMeeting('teams')}><ExternalLink size={14} />Microsoft Teams</button>
                   </div>
                 )}
               </div>

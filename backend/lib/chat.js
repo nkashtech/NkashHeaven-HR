@@ -19,6 +19,7 @@ function messageView(m, senderMap, fileMap = new Map(), quoted = new Map()) {
     pinned: Boolean(m.pinnedAt),
     edited: Boolean(m.editedAt),
     forwardedFrom: m.forwardedFrom || null,
+    receiverOnly: m.receiverOnly,
     reply: reply && !m.deletedAt ? {
       id: reply.id, senderName: reply.senderId ? senderMap.get(reply.senderId)?.name || 'Unknown' : 'HR Assistant',
       body: reply.deletedAt ? null : reply.body, deleted: Boolean(reply.deletedAt), fileName: reply.deletedAt ? null : fileMap.get(reply.attachmentId)?.name || null,
@@ -60,8 +61,11 @@ async function offlineMembers(ids, senderId) {
   return others.filter((id) => !online.has(id));
 }
 
-async function postMessage({ conversationId, senderId, body, attachmentId, link, clientId, replyToId, forwardedFrom }) {
-  const message = await prisma.message.create({ data: { conversationId, senderId: senderId ?? null, body, attachmentId, link, clientId, replyToId, forwardedFrom } });
+// Hides call and meeting notices from whoever started them.
+const visibleTo = (userId) => ({ NOT: { receiverOnly: true, senderId: userId } });
+
+async function postMessage({ conversationId, senderId, body, attachmentId, link, clientId, replyToId, forwardedFrom, receiverOnly = false }) {
+  const message = await prisma.message.create({ data: { conversationId, senderId: senderId ?? null, body, attachmentId, link, clientId, replyToId, forwardedFrom, receiverOnly } });
   await prisma.conversation.update({ where: { id: conversationId }, data: { lastMessageAt: message.createdAt } });
   const ids = await memberIds(conversationId);
   const [view] = await hydrate([message]);
@@ -163,6 +167,7 @@ async function presenceFor(users) {
 }
 
 module.exports = {
+  visibleTo,
   hydrate, memberIds, postMessage, ensureMembership, botConversation, botMessage, directConversation,
   ensureCompanyChannels, ensureDepartmentChannel, renameDepartmentChannel, syncUserChannels, presenceFor,
 };

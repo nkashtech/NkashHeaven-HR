@@ -1,9 +1,11 @@
 const express = require('express');
 const prisma = require('../../lib/prisma');
-const { h } = require('../middleware/validation');
+const { HttpError, h } = require('../middleware/validation');
 const { getSettings } = require('../../lib/settings');
 const { readFile } = require('../../lib/storage');
 const { runAs, asPlatform } = require('../../lib/tenant');
+const { sha256 } = require('../../lib/crypto');
+const meetings = require('../../lib/meetings');
 
 const router = express.Router();
 
@@ -18,6 +20,27 @@ router.get('/:slug/branding', h(async (req, res) => {
     res.json({ name: company.name, slug: company.slug, active: company.active, primaryColor: branding.primaryColor, hasLogo: Boolean(branding.logoFileId) });
   });
 }));
+
+// Answering from the email needs no sign-in: the private link stands in for it. A click only ever happens on this page, not when a mail scanner opens the link.
+async function withInvite(token, fn) {
+  const invite = await asPlatform(async () => await prisma.meetingInvite.findUnique({ where: { tokenHash: sha256(token) } }));
+  if (!invite) throw new HttpError(404, 'This invitation is no longer valid');
+  return runAs(invite.companyId, async () => fn(invite, await prisma.companyEvent.findUnique({ where: { id: invite.eventId } })));
+}
+
+const inviteView = async (invite, event) => {
+  const organiser = await prisma.user.findUnique({ where: { id: event.createdById }, select: { name: true } });
+  return { title: event.title, when: await meetings.when(event), location: event.location, description: event.description, type: meetings.LABELS[event.meetingType], organiser: organiser?.name, link: await meetings.joinLink(event), status: invite.status };
+};
+
+router.get('/meeting-invite/:token', h(async (req, res) => withInvite(req.params.token, async (invite, event) => res.json(await inviteView(invite, event)))));
+
+router.post('/meeting-invite/:token', h(async (req, res) => withInvite(req.params.token, async (invite, event) => {
+  const person = await prisma.user.findUnique({ where: { id: invite.userId }, select: { name: true } });
+  const status = req.body.answer === 'accept' ? 'ACCEPTED' : 'DECLINED';
+  await meetings.respond(invite, event, status, person.name);
+  res.json(await inviteView({ ...invite, status }, event));
+})));
 
 async function sendImage(res, id) {
   const file = id ? await prisma.fileObject.findUnique({ where: { id: Number(id) } }) : null;

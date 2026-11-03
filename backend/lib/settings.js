@@ -90,9 +90,10 @@ async function updateSettings(section, patch) {
 // BR-03: unless HR sets one, the lock date is the 3rd of this month (previous month end + 3 days grace).
 function effectiveLockDate(settings, tz) {
   if (settings.attendance.lockDate) return settings.attendance.lockDate;
+  // Last month stays open until the 3rd, then locks. The current month is never locked by default.
   const now = today(tz);
-  const thisMonth = addDays(monthStart(now), 2);
-  return now >= thisMonth ? thisMonth : addDays(monthStart(addDays(monthStart(now), -1)), 2);
+  const thisMonth = monthStart(now);
+  return now >= addDays(thisMonth, 2) ? thisMonth : monthStart(addDays(thisMonth, -1));
 }
 
 const clearSettingsCache = () => cache.clear();

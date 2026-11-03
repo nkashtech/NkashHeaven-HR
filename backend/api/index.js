@@ -56,9 +56,12 @@ app.use(requestMetrics);
 // A whole office shares one address, and open tabs check in for updates every few seconds.
 const isHeartbeat = (req) => req.path.startsWith('/api/live') || /^\/api\/chat\/calls\/\d+$/.test(req.path);
 app.use(rateLimit({ skip: isHeartbeat, windowMs: 15 * 60 * 1000, max: process.env.NODE_ENV === 'test' ? 100000 : 5000, standardHeaders: true, legacyHeaders: false }));
+// While developing, the app may start on any free port, or be opened from a phone on the same network.
+const localDev = (origin) => process.env.NODE_ENV !== 'production'
+  && /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(origin);
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin || allowedOrigins.includes(origin) || localDev(origin)) return callback(null, true);
     return callback(new Error('Origin not allowed by CORS'), false);
   },
   credentials: true,

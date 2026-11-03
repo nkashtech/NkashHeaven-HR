@@ -237,9 +237,17 @@ describe('attendance (Odoo behaviour)', () => {
 
   describe('editing', () => {
     let id;
-    const date = pastWeekday(4);
+    let date;
     beforeAll(async () => {
-      id = (await as('hr').post('/attendance', { userId: ids.emp, date, checkIn: '08:00', checkOut: '16:00', reason: 'setup' })).body.id;
+      // Early in a month this date falls in last month, which the default rule locks. These tests are about editing, so open it.
+      await as('hr').put('/settings/company', { attendance: { lockDate: '2000-01-01' } });
+      // Around a weekend, nearby offsets land on the same day another test already used, so take the first free one.
+      for (let back = 4; !date; back += 1) {
+        const candidate = pastWeekday(back);
+        if (!(await prisma.attendance.count({ where: { userId: ids.emp, date: toDbDate(candidate) } }))) date = candidate;
+      }
+      const made = await as('hr').post('/attendance', { userId: ids.emp, date, checkIn: '08:00', checkOut: '16:00', reason: 'setup' });
+      id = made.body.id;
     });
 
     it('lets the owner edit times, flags it and records old and new', async () => {
@@ -2083,5 +2091,23 @@ describe('call alerts when the app is closed', () => {
 
   it('only offers Google as a calendar connection', async () => {
     expect((await as('hr').get('/calendar/connections')).body.connections.map((c) => c.provider)).toEqual(['GOOGLE']);
+  });
+});
+
+describe('default attendance lock', () => {
+  const { effectiveLockDate } = require('../lib/settings');
+  const at = (when, fn) => { jest.useFakeTimers({ now: new Date(`${when}T10:00:00Z`), doNotFake: ['nextTick', 'setImmediate', 'setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] }); try { return fn(); } finally { jest.useRealTimers(); } };
+  const rule = (when) => at(when, () => effectiveLockDate({ attendance: { lockDate: null } }, 'UTC'));
+
+  it('keeps last month open until the 3rd and never locks the current month', () => {
+    expect(rule('2026-11-01')).toBe('2026-10-01');
+    expect(rule('2026-11-02')).toBe('2026-10-01');
+    expect(rule('2026-11-03')).toBe('2026-11-01');
+    expect(rule('2026-11-30')).toBe('2026-11-01');
+    expect(rule('2027-01-02')).toBe('2026-12-01');
+  });
+
+  it('a lock date set by HR wins', () => {
+    expect(effectiveLockDate({ attendance: { lockDate: '2026-06-15' } }, 'UTC')).toBe('2026-06-15');
   });
 });
